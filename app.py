@@ -44,32 +44,23 @@ def get_sheet():
             st.error(f"구글 시트 연결 실패: {e}")
         return None
 
-# --- 데이터 불러오기 (컬럼 순서 및 번호 수정) ---
+# --- 데이터 불러오기 ---
 def load_data():
     sheet = get_sheet()
     if sheet:
         try:
             data = sheet.get_all_records()
-            # [수정] 목사님이 원하시는 컬럼 순서로 재배치 (이름 -> 직분 -> 상태 순)
+            # 컬럼 순서: 이름 -> 직분 -> 상태 순
             cols = ["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"]
-            
             if not data: return pd.DataFrame(columns=cols)
             df = pd.DataFrame(data).astype(str)
-            
-            # 부족한 컬럼 채우기
             for c in cols:
                 if c not in df.columns: df[c] = ""
-            
-            # 불필요한 행 제거 (헤더 중복 등)
             if '이름' in df.columns:
                 df = df[~df['이름'].str.replace(' ', '').isin(['이름', 'Name', '번호'])]
             
-            # [수정] 결과 데이터프레임을 지정한 컬럼 순서대로 정리
             df = df[cols]
-            
-            # [수정] 번호를 1번부터 시작하도록 변경
-            df.index = range(1, len(df) + 1)
-            
+            df.index = range(1, len(df) + 1) # 번호 1번부터 시작
             return df
         except:
             return pd.DataFrame(columns=["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"])
@@ -78,7 +69,6 @@ def load_data():
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
-        # 저장할 때는 인덱스를 제외하고 데이터만 저장
         save_df = df.copy().fillna("")
         sheet.clear()
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
@@ -92,4 +82,108 @@ if menu == "1. 성도 검색 및 수정":
     df = load_data()
     
     if not df.empty:
-        col1, col2 = st.columns([2, 1
+        # [에러 수정된 줄] 괄호를 확실히 닫았습니다.
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            search = st.text_input("이름/전화번호 검색")
+        with col2:
+            status_options = ["출석 중", "새가족", "장기결석", "한국 체류", "타지역 체류", "유학 종료", "전출"]
+            selected_status = st.multiselect("상태별 모아보기", options=status_options)
+
+        results = df.copy()
+        if selected_status: results = results[results['상태'].isin(selected_status)]
+        if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
+
+        st.subheader(f"📊 검색 결과: {len(results)}명")
+        edited_df = st.data_editor(
+            results,
+            column_config={
+                "사진": st.column_config.ImageColumn("사진", width="small"),
+                "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"]),
+                "상태": st.column_config.SelectboxColumn("상태", options=status_options),
+                "심방기록": st.column_config.TextColumn("심방기록", width="large")
+            },
+            use_container_width=True,
+            key="editor_final_fix"
+        )
+
+        if st.button("💾 표 수정사항 저장하기", type="primary"):
+            df.update(edited_df)
+            save_to_google(df)
+            st.success("저장되었습니다!")
+            st.rerun()
+
+        st.divider()
+
+        st.subheader("📝 상세 관리 (심방 기록 / 사진)")
+        if not results.empty:
+            sel_person = st.selectbox("관리할 성도를 선택하세요:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '생년월일']})")
+            
+            t1, t2 = st.tabs(["✍️ 심방 기록 추가", "📷 사진 변경 및 회전"])
+            
+            with t1:
+                st.write(f"**{df.loc[sel_person, '이름']}** 성도님 심방 기록")
+                st.text_area("기존 기록", value=df.loc[sel_person, '심방기록'], height=100, disabled=True)
+                
+                with st.form("visit_log_form", clear_on_submit=True):
+                    v_date = st.date_input("심방 날짜", datetime.now())
+                    v_text = st.text_area("심방 내용")
+                    if st.form_submit_button("기록 저장"):
+                        log = f"[{v_date}] {v_text}"
+                        old_log = df.at[sel_person, '심방기록']
+                        df.at[sel_person, '심방기록'] = f"{old_log} | {log}" if old_log and old_log != "nan" else log
+                        save_to_google(df)
+                        st.success("기록이 추가되었습니다.")
+                        st.rerun()
+
+            with t2:
+                col_img1, col_img2 = st.columns([1, 2])
+                with col_img1:
+                    if df.at[sel_person, '사진']: st.image(df.at[sel_person, '사진'], width=150)
+                with col_img2:
+                    up_file = st.file_uploader("사진 업로드", type=['jpg','jpeg','png'], key="photo_up")
+                    if up_file:
+                        img = Image.open(up_file)
+                        if "rot" not in st.session_state: st.session_state.rot = 0
+                        if st.button("🔄 90도 회전"):
+                            st.session_state.rot = (st.session_state.rot + 90) % 360
+                        img = img.rotate(-st.session_state.rot, expand=True)
+                        cropped = st_cropper(img, aspect_ratio=(1,1), box_color="red")
+                        if st.button("이 사진으로 저장"):
+                            df.at[sel_person, '사진'] = image_to_base64(cropped)
+                            save_to_google(df)
+                            st.session_state.rot = 0
+                            st.success("사진이 변경되었습니다.")
+                            st.rerun()
+        else:
+            st.info("검색된 성도가 없습니다.")
+
+# --- 2. 새가족 등록 ---
+elif menu == "2. 새가족 등록":
+    st.header("📝 새가족 등록")
+    with st.form("new_family_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("이름 (필수)")
+            role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "목사"])
+            status = st.selectbox("상태", ["새가족", "출석 중"])
+            phone = st.text_input("전화번호")
+        with c2:
+            birth = st.text_input("생년월일 (8자리)", placeholder="19900101")
+            addr = st.text_input("주소")
+            biz_addr = st.text_input("비즈니스 주소")
+            child = st.text_input("자녀")
+        
+        if st.form_submit_button("등록하기"):
+            if not name: st.error("이름을 입력해주세요.")
+            else:
+                if len(birth) == 8: birth = f"{birth[:4]}-{birth[4:6]}-{birth[6:]}"
+                df = load_data()
+                new_row = pd.DataFrame([["", name, role, status, phone, birth, addr, biz_addr, child, ""]], 
+                                      columns=df.columns)
+                save_to_google(pd.concat([df, new_row], ignore_index=True))
+                st.success(f"{name} 성도님 등록 완료!")
+
+elif menu == "3. (관리자용) PDF 초기화":
+    st.header("⚠️ 데이터 초기화")
+    st.warning("이 기능은 신중히 사용하세요.")
