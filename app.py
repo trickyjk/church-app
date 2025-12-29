@@ -71,26 +71,20 @@ def load_data():
                 return pd.DataFrame(columns=["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
             
             df = pd.DataFrame(data)
-            
-            # [중요] 모든 데이터를 문자열(String)로 변환해야 에러가 안 납니다.
             df = df.astype(str)
             
-            # '사진' 컬럼이 없으면 새로 만듦
             if '사진' not in df.columns:
                 df['사진'] = ""
 
-            # 컬럼 순서 정리 (사진을 맨 앞으로)
             cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
             for c in cols:
                 if c not in df.columns:
                     df[c] = ""
             
-            # 불필요한 헤더 행 제거
             if '이름' in df.columns:
                 clean_name = df['이름'].str.replace(' ', '')
                 df = df[~clean_name.isin(['이름', 'Name', '번호'])]
 
-            # [핵심] 생년월일을 강제로 '문자열'로 유지 (그래야 8자리 입력 가능)
             if '생년월일' in df.columns:
                 df['생년월일'] = df['생년월일'].replace('nan', '')
 
@@ -114,15 +108,11 @@ def save_to_google(df):
 def fix_date_format(df_to_fix):
     """숫자 8자리(19710116)를 날짜 형식(1971-01-16)으로 변환"""
     if '생년월일' in df_to_fix.columns:
-        # 숫자만 남기고 다 지움
         df_to_fix['생년월일'] = df_to_fix['생년월일'].astype(str).str.replace(r'[^0-9]', '', regex=True)
-        
-        # 8자리인 경우에만 - 넣어서 변환
         def convert_8digits(val):
             if len(val) == 8:
                 return f"{val[:4]}-{val[4:6]}-{val[6:]}"
             return val
-        
         df_to_fix['생년월일'] = df_to_fix['생년월일'].apply(convert_8digits)
     return df_to_fix
 
@@ -147,7 +137,6 @@ if menu == "1. 성도 검색 및 수정":
 
         delete_mode = st.checkbox("🗑️ 삭제 모드")
 
-        # 필터링 로직
         results = df.copy()
         if selected_status:
             results = results[results['상태'].isin(selected_status)]
@@ -162,14 +151,13 @@ if menu == "1. 성도 검색 및 수정":
         else:
              st.info(f"📊 전체 성도: {total_count}명")
 
-        # --- 데이터 수정 화면 (표) ---
         if delete_mode:
             results.insert(0, "삭제선택", False)
             edited_df = st.data_editor(
                 results,
                 column_config={
                     "삭제선택": st.column_config.CheckboxColumn("삭제", width="small"),
-                    "사진": st.column_config.ImageColumn("사진", width="small"), # 사진 보이게 설정
+                    "사진": st.column_config.ImageColumn("사진", width="small"),
                     "이름": st.column_config.TextColumn("이름", width="small"),
                     "상태": st.column_config.SelectboxColumn("상태", options=status_options, width="small"),
                     "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"], width="small"),
@@ -192,7 +180,6 @@ if menu == "1. 성도 검색 및 수정":
                     st.warning("삭제할 대상을 선택해주세요.")
 
         else:
-            # 수정 모드 (일반)
             edited_df = st.data_editor(
                 results,
                 column_config={
@@ -203,7 +190,6 @@ if menu == "1. 성도 검색 및 수정":
                     "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
                     "주소": st.column_config.TextColumn("주소", width="large"),
                     "자녀": st.column_config.TextColumn("자녀", width="medium"),
-                    # [수정됨] placeholder 제거 (에러 해결)
                     "생년월일": st.column_config.TextColumn("생년월일", width="medium", help="숫자 8자리만 입력하면 저장 시 자동 변환됩니다."),
                     "심방기록": st.column_config.TextColumn("심방기록", width="large")
                 },
@@ -212,7 +198,6 @@ if menu == "1. 성도 검색 및 수정":
                 key="editor_modify"
             )
 
-            # 변경사항 저장 버튼
             if st.button("💾 변경사항 저장하기 (텍스트/정보)", type="primary"):
                 with st.spinner('날짜 변환 및 저장 중...'):
                     fixed_edited_df = fix_date_format(edited_df.copy())
@@ -221,13 +206,10 @@ if menu == "1. 성도 검색 및 수정":
                 st.success("✅ 저장 완료! (날짜가 자동으로 1971-01-16 형식으로 변환되었습니다)")
                 st.rerun()
 
-            # --- [추가 기능] 사진 개별 수정 구역 ---
             st.divider()
             st.subheader("📷 사진 변경")
             
-            # 검색 결과가 있을 때만 사진 변경 기능 활성화
             if not results.empty:
-                # 누구 사진을 바꿀지 선택
                 selected_idx = st.selectbox("사진을 변경할 성도를 선택하세요:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '생년월일']})")
                 
                 col_p1, col_p2 = st.columns([1, 1])
@@ -261,32 +243,25 @@ if menu == "1. 성도 검색 및 수정":
 # 2. 새가족 등록
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    
-    # 레이아웃 나누기
     left_col, right_col = st.columns([1, 1])
-
     with left_col:
         st.info("Step 1. 기본 정보 입력")
         name = st.text_input("이름 (필수)")
         role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "전도사", "목사"])
         status = st.selectbox("상태", ["출석 중", "새가족", "한국 체류", "타지역 체류", "장기결석", "유학 종료", "전출"])
         phone = st.text_input("전화번호")
-        # [변경] 8자리 입력 안내
         birth = st.text_input("생년월일 (숫자 8자리)", placeholder="예: 19800101")
     
     with right_col:
         st.info("Step 2. 사진 등록 (선택)")
         img_file = st.file_uploader("사진 파일 업로드", type=['png', 'jpg', 'jpeg'])
         final_img_str = ""
-        
         if img_file:
             image = Image.open(img_file)
             st.write("↘️ 사진의 얼굴 부분을 박스로 맞춰주세요:")
-            # 자르기 도구
             cropped_image = st_cropper(image, aspect_ratio=(1,1), box_color='blue')
             final_img_str = image_to_base64(cropped_image)
 
-    # 하단 공통 입력
     address = st.text_input("주소")
     children = st.text_input("자녀")
     visit = st.text_input("비고/심방")
@@ -295,7 +270,6 @@ elif menu == "2. 새가족 등록":
         if name == "":
             st.error("이름을 입력해주세요.")
         else:
-            # 날짜 자동 변환 (8자리 -> YYYY-MM-DD)
             if len(birth) == 8 and birth.isdigit():
                 birth = f"{birth[:4]}-{birth[4:6]}-{birth[6:]}"
 
@@ -315,7 +289,43 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
     st.header("⚠️ 데이터베이스 초기화")
     st.warning("주의: 기존 사진과 데이터가 모두 삭제됩니다.")
     uploaded_file = st.file_uploader("새 주소록 PDF 업로드", type="pdf")
-    
     if uploaded_file and st.button("초기화 및 변환 시작"):
         with st.spinner('변환 중...'):
             with pdfplumber.open(uploaded_file) as pdf:
+                all_data = []
+                last_valid_address = "" 
+                last_valid_children = "" 
+                for page in pdf.pages:
+                    tables = page.extract_tables()
+                    for table in tables:
+                        for row in table:
+                            if not row or row[1] is None: continue
+                            try:
+                                name = row[1].replace('\n', ' ') if row[1] else ""
+                                if name.replace(' ', '') in ["이름", "Name", "번호"]: continue
+                                if row[0] == '번호': continue
+                                role = row[2].replace('\n', ' ') if row[2] else ""
+                                raw_address = row[3].replace('\n', ' ') if row[3] else ""
+                                raw_children = row[6].replace('\n', ', ') if len(row) > 6 and row[6] else ""
+                                cell = row[5].replace('\n', ', ') if len(row) > 5 and row[5] else ""
+                                if raw_address.strip() != "":
+                                    final_address = raw_address
+                                    last_valid_address = raw_address
+                                else:
+                                    final_address = last_valid_address
+                                if raw_children.strip() != "":
+                                    final_children = raw_children
+                                    last_valid_children = raw_children
+                                else:
+                                    final_children = last_valid_children
+                                all_data.append({
+                                    "사진": "", "이름": name, "상태": "출석 중", "직분": role, 
+                                    "전화번호": cell, "주소": final_address, 
+                                    "자녀": final_children, "생년월일": "", "심방기록": ""
+                                })
+                            except: continue
+                new_df = pd.DataFrame(all_data)
+                cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
+                new_df = new_df[cols]
+                save_to_google(new_df)
+            st.success(f"✅ 완료! 총 {len(new_df)}명 업로드됨")
