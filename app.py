@@ -77,7 +77,8 @@ if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
     if not df.empty:
-        col1, col2 = st.columns([2, 1])
+        # [수정완료] 괄호 짝을 정확히 맞췄습니다.
+        col1, col2 = st.columns([2, 1]) 
         with col1:
             search = st.text_input("이름/전화번호 검색")
         with col2:
@@ -88,7 +89,7 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # 메인 화면 사진 표시 설정
+        # [기능추가] 메인 화면 표에서 사진이 보이도록 설정
         edited_df = st.data_editor(
             results,
             column_config={
@@ -179,12 +180,13 @@ elif menu == "3. PDF 주소록 만들기":
         # 주소로 가족 묶기
         df['addr_key'] = df['주소'].str.strip()
         for addr, group in df.groupby('addr_key', sort=False):
+            # [수정] 성함 직분 형식 변경 및 괄호 제거
             names = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             rep = group.iloc[0]
             y = pdf.get_y()
             if y > 240: pdf.add_page(); y = pdf.get_y()
             
-            # 사진 (오타 수정됨)
+            # 사진 (base64.b64decode 오타 수정됨)
             if rep['사진'] and "base64," in rep['사진']:
                 try:
                     img_data = base64.b64decode(rep['사진'].split(",")[1])
@@ -198,6 +200,7 @@ elif menu == "3. PDF 주소록 만들기":
             
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
+            # [수정] 대시(-) 제거
             details = "\n".join([f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan"])
             pdf.multi_cell(0, 6, details)
             pdf.ln(12)
