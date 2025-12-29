@@ -1,4 +1,4 @@
-# Final 1.2
+# Final 1.2 - Placeholder error remove
 import streamlit as st
 import pdfplumber
 import pandas as pd
