@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v2.5)")
+st.title("⛪ 킹스턴한인교회 교적부 (v2.6)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -72,12 +72,14 @@ def save_to_google(df):
 # --- 사이드바 메뉴 ---
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
+# 직분 리스트 정의 (요청하신 순서)
+ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
+
 # 1. 성도 검색 및 수정
 if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
     if not df.empty:
-        # [문법 교정] 괄호 닫힘 확인
         col1, col2 = st.columns([2, 1]) 
         with col1:
             search = st.text_input("이름/전화번호 검색")
@@ -89,16 +91,16 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # 첫 화면에서 사진이 보이도록 설정
+        # 메인 화면 표 설정
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
-                "직분": st.column_config.SelectboxColumn("직분", options=["목사", "장로", "권사", "집사", "성도", "청년"]),
+                "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v2.5_main_editor"
+            key="v2.6_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -125,17 +127,35 @@ if menu == "1. 성도 검색 및 수정":
                 up_file = st.file_uploader("사진 업로드")
                 if up_file:
                     img = Image.open(up_file)
-                    if "rot" not in st.session_state: st.session_state.rot = 0
                     if st.button("🔄 90도 회전"):
+                        if "rot" not in st.session_state: st.session_state.rot = 0
                         st.session_state.rot = (st.session_state.rot + 90) % 360
-                    img = img.rotate(-st.session_state.rot, expand=True)
+                    img = img.rotate(-st.session_state.get("rot", 0), expand=True)
                     cropped = st_cropper(img, aspect_ratio=(1,1))
                     if st.button("사진 저장"):
                         df.at[sel_person, '사진'] = image_to_base64(cropped)
                         save_to_google(df)
-                        st.session_state.rot = 0
                         st.success("변경 완료")
                         st.rerun()
+
+# 2. 새가족 등록
+elif menu == "2. 새가족 등록":
+    st.header("📝 새가족 등록")
+    with st.form("new_fam"):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("이름 (필수)")
+            role = st.selectbox("직분", ROLE_OPTIONS)
+            status = st.selectbox("상태", ["새가족", "출석 중"])
+        with c2:
+            phone = st.text_input("전화번호")
+            addr = st.text_input("주소")
+            biz = st.text_input("비즈니스 주소")
+        if st.form_submit_button("등록"):
+            df_curr = load_data()
+            new_row = pd.DataFrame([["", name, role, status, phone, "", addr, biz, "", ""]], columns=df_curr.columns)
+            save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
+            st.success("등록 완료")
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
@@ -146,16 +166,17 @@ elif menu == "3. PDF 주소록 만들기":
     if st.button("📄 한글 PDF 생성"):
         pdf = FPDF()
         try:
-            # [파일명 수정] 목사님이 올리신 실제 파일명으로 연동
+            # [파일명 교정] 목사님이 올리신 NanumGothic-Regular.ttf 사용
             pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf') 
             pdf.set_font('Nanum', '', 12)
             font_ok = True
         except Exception as e:
             st.warning(f"폰트 인식 실패(영문 출력): {e}")
-            pdf.set_font("Arial", 'B', 12)
+            pdf.set_font("Arial", '', 12)
             font_ok = False
             
         pdf.add_page()
+        pdf.set_font('Nanum' if font_ok else 'Arial', '', 16)
         pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
 
@@ -167,7 +188,7 @@ elif menu == "3. PDF 주소록 만들기":
             y = pdf.get_y()
             if y > 240: pdf.add_page(); y = pdf.get_y()
             
-            # 사진 (함수명 b64decode 교정)
+            # 사진 
             if rep['사진'] and "base64," in rep['사진']:
                 try:
                     img_data = base64.b64decode(rep['사진'].split(",")[1])
@@ -176,12 +197,11 @@ elif menu == "3. PDF 주소록 만들기":
             else: pdf.rect(10, y, 35, 35)
             
             pdf.set_xy(50, y)
-            pdf.set_font('Nanum' if font_ok else 'Arial', 'B', 12)
+            pdf.set_font('Nanum' if font_ok else 'Arial', '', 12) # 에러 방지를 위해 Bold 제거
             pdf.cell(0, 8, names, ln=True)
             
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
-            # 대시(-) 제거 및 항목 표시
             details = "\n".join([f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan" and rep[c] != ""])
             pdf.multi_cell(0, 6, details)
             pdf.ln(12)
