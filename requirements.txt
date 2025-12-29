@@ -3,3 +3,5 @@ pandas
 pdfplumber
 gspread
 oauth2client
+streamlit-cropper
+Pillow

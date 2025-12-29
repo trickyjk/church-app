@@ -4,6 +4,10 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, date
+from streamlit_cropper import st_cropper
+from PIL import Image
+import io
+import base64
 
 # --- 구글 시트 연결 설정 ---
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -14,14 +18,36 @@ SHEET_NAME = '교적부_데이터'
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
 st.title("⛪ 킹스턴한인교회 교적부 (Online)")
 
-# --- [핵심 수정] 구글 시트 연결 함수 (하이브리드 방식) ---
+# --- [기능] 이미지 처리 함수들 (압축 및 변환) ---
+def image_to_base64(img):
+    """이미지를 구글 시트에 저장 가능한 문자열로 변환 (용량 최적화)"""
+    if img is None:
+        return ""
+    # 1. 크기 줄이기 (썸네일용, 최대 150x150)
+    img = img.resize((150, 150))
+    # 2. JPG로 변환 및 메모리에 저장
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG", quality=70)
+    # 3. 문자열(Base64)로 변환
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    return img_str
+
+def base64_to_image(img_str):
+    """문자열을 다시 이미지로 변환"""
+    if not img_str or img_str == "nan":
+        return None
+    try:
+        img_data = base64.b64decode(img_str)
+        return Image.open(io.BytesIO(img_data))
+    except:
+        return None
+
+# --- 구글 시트 연결 함수 ---
 def get_sheet():
     try:
-        # 1. 스트림릿 클라우드 비밀금고(Secrets) 확인
         if "gcp_service_account" in st.secrets:
             creds_dict = st.secrets["gcp_service_account"]
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-        # 2. 내 컴퓨터 파일(secrets.json) 확인
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, SCOPE)
             
@@ -38,11 +64,23 @@ def load_data():
         try:
             data = sheet.get_all_records()
             if not data: 
-                return pd.DataFrame(columns=["이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
+                return pd.DataFrame(columns=["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
             
             df = pd.DataFrame(data)
             df = df.astype(str)
             
+            # '사진' 컬럼이 없으면 새로 만듦
+            if '사진' not in df.columns:
+                df['사진'] = ""
+
+            # 컬럼 순서 정리 (사진을 맨 앞으로)
+            cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
+            # 데이터에 없는 컬럼은 빈 값으로 추가
+            for c in cols:
+                if c not in df.columns:
+                    df[c] = ""
+            
+            # 불필요한 헤더 행 제거
             if '이름' in df.columns:
                 clean_name = df['이름'].str.replace(' ', '')
                 df = df[~clean_name.isin(['이름', 'Name', '번호'])]
@@ -50,10 +88,10 @@ def load_data():
             if '생년월일' in df.columns:
                 df['생년월일'] = pd.to_datetime(df['생년월일'], errors='coerce').dt.date
 
-            return df
+            return df[cols] # 순서 맞춰서 리턴
         except Exception:
-            return pd.DataFrame(columns=["이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
-    return pd.DataFrame(columns=["이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
+            return pd.DataFrame(columns=["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
+    return pd.DataFrame(columns=["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"])
 
 # --- 데이터 저장하기 ---
 def save_to_google(df):
@@ -89,8 +127,6 @@ if menu == "1. 성도 검색 및 수정":
             status_options = ["출석 중", "새가족", "장기결석", "한국 체류", "타지역 체류", "유학 종료", "전출"]
             selected_status = st.multiselect("상태별 모아보기", options=status_options)
 
-        delete_mode = st.checkbox("🗑️ 삭제 모드")
-
         results = df.copy()
         if selected_status:
             results = results[results['상태'].isin(selected_status)]
@@ -99,116 +135,123 @@ if menu == "1. 성도 검색 및 수정":
             results = results[mask]
 
         filtered_count = len(results)
-        is_filtered = (len(selected_status) > 0) or (search != "")
         
-        if is_filtered:
-             st.success(f"📊 **전체 {total_count}명** 중 조건에 맞는 성도는 **{filtered_count}명**입니다.")
-        else:
-             st.info(f"📊 **전체 성도: {total_count}명**")
+        if (len(selected_status) > 0) or (search != ""):
+             st.success(f"📊 검색 결과: **{filtered_count}명**")
+        
+        st.divider()
 
-        if delete_mode:
-            results.insert(0, "삭제선택", False)
-            edited_df = st.data_editor(
-                results,
-                column_config={
-                    "삭제선택": st.column_config.CheckboxColumn("삭제", width="small"),
-                    "이름": st.column_config.TextColumn("이름", width="small"),
-                    "상태": st.column_config.SelectboxColumn("상태", options=status_options, width="small"),
-                    "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"], width="small"),
-                    "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
-                    "주소": st.column_config.TextColumn("주소", width="large"),
-                    "자녀": st.column_config.TextColumn("자녀", width="medium"),
-                    "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", width="medium")
-                },
-                num_rows="dynamic",
-                use_container_width=True
-            )
-            
-            if st.button("🗑️ 체크한 성도 삭제 (구글 시트 반영)", type="primary"):
-                to_delete = edited_df[edited_df["삭제선택"] == True]
-                if not to_delete.empty:
-                    delete_indices = []
-                    for idx, row in to_delete.iterrows():
-                        match = df[(df['이름'] == row['이름']) & (df['전화번호'] == row['전화번호'])]
-                        delete_indices.extend(match.index.tolist())
+        # --- [변경] 카드 형태로 보여주기 (사진 때문에 표보다 이게 낫습니다) ---
+        for index, row in results.iterrows():
+            with st.container():
+                c1, c2, c3 = st.columns([1, 2, 4])
+                
+                # 1. 사진 영역
+                with c1:
+                    img = base64_to_image(row['사진'])
+                    if img:
+                        st.image(img, width=100)
+                    else:
+                        st.write("🖼️ (사진 없음)")
+                
+                # 2. 기본 정보 영역
+                with c2:
+                    st.subheader(f"{row['이름']} ({row['직분']})")
+                    st.caption(f"상태: {row['상태']}")
                     
-                    final_df = df.drop(index=delete_indices)
-                    with st.spinner('구글 시트에 반영 중...'):
-                        save_to_google(final_df)
-                    st.success("✅ 삭제 완료!")
-                    st.rerun()
-                else:
-                    st.warning("삭제할 성도를 선택해주세요.")
-        else:
-            edited_df = st.data_editor(
-                results,
-                column_config={
-                    "이름": st.column_config.TextColumn("이름", width="small"),
-                    "상태": st.column_config.SelectboxColumn("상태", options=status_options, required=True, width="small"),
-                    "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"], width="small"),
-                    "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
-                    "주소": st.column_config.TextColumn("주소", width="large"),
-                    "자녀": st.column_config.TextColumn("자녀", width="medium"),
-                    "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", width="medium")
-                },
-                num_rows="dynamic",
-                use_container_width=True
-            )
+                # 3. 상세 정보 및 수정 영역
+                with c3:
+                    with st.expander("📝 상세 정보 및 수정"):
+                        with st.form(key=f"edit_{index}"):
+                            new_phone = st.text_input("전화번호", value=row['전화번호'])
+                            new_address = st.text_input("주소", value=row['주소'])
+                            new_visit = st.text_area("심방기록/비고", value=row['심방기록'])
+                            
+                            # 사진 수정 기능
+                            st.write("📷 사진 변경 (선택사항)")
+                            uploaded_file = st.file_uploader("새 사진 업로드", type=['jpg', 'png', 'jpeg'], key=f"file_{index}")
+                            cropped_img_str = row['사진'] # 기본값은 기존 사진
+                            
+                            if uploaded_file:
+                                image = Image.open(uploaded_file)
+                                st.write("박스를 움직여서 얼굴을 맞춰주세요:")
+                                # 자르기 도구 호출 (1:1 비율 고정)
+                                cropped_img = st_cropper(image, aspect_ratio=(1,1), box_color='#FF0000', key=f"crop_{index}")
+                                cropped_img_str = image_to_base64(cropped_img) # 자른 사진을 문자열로 변환
 
-            if st.button("💾 변경사항 저장하기", type="primary"):
-                if search or selected_status:
-                    st.warning("⚠️ 필터/검색어를 지우고 전체 목록에서 수정 후 저장해주세요.")
-                else:
-                    with st.spinner('저장 중...'):
-                        save_df = edited_df.copy()
-                        save_df = save_df[~save_df['이름'].str.replace(' ', '').isin(['이름', 'Name', '번호'])]
-                        save_to_google(save_df)
-                    st.success("✅ 저장 완료!")
-                    st.rerun()
+                            if st.form_submit_button("저장"):
+                                df.at[index, '전화번호'] = new_phone
+                                df.at[index, '주소'] = new_address
+                                df.at[index, '심방기록'] = new_visit
+                                df.at[index, '사진'] = cropped_img_str # 사진 업데이트
+                                
+                                with st.spinner('저장 중...'):
+                                    save_to_google(df)
+                                st.success("✅ 수정 완료!")
+                                st.rerun()
+                st.divider()
+
     else:
-        st.info("데이터가 없습니다. (PDF를 등록해주세요)")
+        st.info("데이터가 없습니다.")
 
 # 2. 새가족 등록
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    with st.form("new_member_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("이름 (필수)")
-            role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "전도사", "목사"])
-            phone = st.text_input("전화번호")
-            birth = st.text_input("생년월일 (숫자 8자리)", placeholder="예: 19710116")
-        with col2:
-            status = st.selectbox("상태", ["출석 중", "새가족", "한국 체류", "타지역 체류", "장기결석", "유학 종료", "전출"])
-            address = st.text_input("주소")
-            children = st.text_input("자녀")
-            visit = st.text_input("비고/심방")
+    
+    # 레이아웃 나누기
+    left_col, right_col = st.columns([1, 1])
+
+    with left_col:
+        st.info("Step 1. 기본 정보 입력")
+        name = st.text_input("이름 (필수)")
+        role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "전도사", "목사"])
+        status = st.selectbox("상태", ["출석 중", "새가족", "한국 체류", "타지역 체류", "장기결석", "유학 종료", "전출"])
+        phone = st.text_input("전화번호")
+        birth = st.text_input("생년월일 (예: 1980-01-01)")
+    
+    with right_col:
+        st.info("Step 2. 사진 등록 (선택)")
+        img_file = st.file_uploader("사진 파일 업로드", type=['png', 'jpg', 'jpeg'])
+        final_img_str = ""
         
-        if st.form_submit_button("등록 완료"):
-            if name == "":
-                st.error("이름을 입력해주세요.")
-            else:
-                if birth and len(birth) == 8 and birth.isdigit():
-                    birth = f"{birth[:4]}-{birth[4:6]}-{birth[6:]}"
-                
-                with st.spinner('등록 중...'):
-                    current_df = load_data()
-                    new_data = pd.DataFrame([{
-                        "이름": name, "상태": status, "직분": role, "전화번호": phone,
-                        "주소": address, "자녀": children, "생년월일": birth, "심방기록": visit
-                    }])
-                    updated_df = pd.concat([current_df, new_data], ignore_index=True)
-                    save_to_google(updated_df)
-                st.success(f"🎉 '{name}' 성도님 등록 완료!")
+        if img_file:
+            image = Image.open(img_file)
+            st.write("↘️ 정사각형으로 자를 영역을 선택하세요:")
+            # 자르기 도구 (실시간)
+            cropped_image = st_cropper(image, aspect_ratio=(1,1), box_color='blue')
+            # 미리보기 보여주기
+            st.write("미리보기:")
+            st.image(cropped_image, width=150)
+            final_img_str = image_to_base64(cropped_image)
+
+    # 하단 공통 입력
+    address = st.text_input("주소")
+    children = st.text_input("자녀")
+    visit = st.text_input("비고/심방")
+
+    if st.button("등록 완료", type="primary"):
+        if name == "":
+            st.error("이름을 입력해주세요.")
+        else:
+            with st.spinner('등록 중...'):
+                current_df = load_data()
+                new_data = pd.DataFrame([{
+                    "사진": final_img_str,
+                    "이름": name, "상태": status, "직분": role, "전화번호": phone,
+                    "주소": address, "자녀": children, "생년월일": birth, "심방기록": visit
+                }])
+                updated_df = pd.concat([current_df, new_data], ignore_index=True)
+                save_to_google(updated_df)
+            st.success(f"🎉 '{name}' 성도님 등록 완료!")
 
 # 3. PDF 초기화
 elif menu == "3. (관리자용) PDF로 데이터 초기화":
     st.header("⚠️ 데이터베이스 초기화")
-    st.info("구글 시트의 모든 데이터가 삭제되고 PDF로 교체됩니다.")
+    st.warning("주의: 기존 사진과 데이터가 모두 삭제됩니다.")
     uploaded_file = st.file_uploader("새 주소록 PDF 업로드", type="pdf")
     
     if uploaded_file and st.button("초기화 및 변환 시작"):
-        with st.spinner('변환 및 업로드 중...'):
+        with st.spinner('변환 중...'):
             with pdfplumber.open(uploaded_file) as pdf:
                 all_data = []
                 last_valid_address = "" 
@@ -227,19 +270,21 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
                                 raw_address = row[3].replace('\n', ' ') if row[3] else ""
                                 raw_children = row[6].replace('\n', ', ') if len(row) > 6 and row[6] else ""
                                 cell = row[5].replace('\n', ', ') if len(row) > 5 and row[5] else ""
+                                
                                 if raw_address.strip() != "":
                                     final_address = raw_address
-                                    final_children = raw_children
                                     last_valid_address = raw_address
-                                    last_valid_children = raw_children
                                 else:
                                     final_address = last_valid_address
-                                    if raw_children.strip() == "":
-                                        final_children = last_valid_children
-                                    else:
-                                        final_children = raw_children
                                 
+                                if raw_children.strip() != "":
+                                    final_children = raw_children
+                                    last_valid_children = raw_children
+                                else:
+                                    final_children = last_valid_children
+
                                 all_data.append({
+                                    "사진": "", # 초기화할 땐 사진 없음
                                     "이름": name, "상태": "출석 중", "직분": role, 
                                     "전화번호": cell, "주소": final_address, 
                                     "자녀": final_children,
@@ -247,7 +292,7 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
                                 })
                             except: continue
                 new_df = pd.DataFrame(all_data)
-                cols = ["이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
+                cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
                 new_df = new_df[cols]
                 save_to_google(new_df)
             st.success(f"✅ 완료! 총 {len(new_df)}명 업로드됨")
