@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v1.9.3)")
+st.title("⛪ 킹스턴한인교회 교적부 (v2.1 최종 통합본)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -90,18 +90,7 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        edited_df = st.data_editor(
-            results,
-            column_config={
-                "사진": st.column_config.ImageColumn("사진", width="small"),
-                "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"]),
-                "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "심방기록": st.column_config.TextColumn("심방기록", width="large")
-            },
-            use_container_width=True,
-            key="v1.9.3_editor"
-        )
-
+        edited_df = st.data_editor(results, use_container_width=True, key="v2.1_editor")
         if st.button("💾 정보 저장하기", type="primary"):
             df.update(edited_df)
             save_to_google(df)
@@ -165,54 +154,97 @@ elif menu == "2. 새가족 등록":
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
-    st.header("🖨️ PDF 주소록 생성 (한글 지원)")
+    st.header("🖨️ PDF 주소록 생성 (가족 단위 정렬)")
     df = load_data()
-    # [수정] 요청하신 순서대로 기본값(default) 설정
     inc_cols = st.multiselect(
         "포함 정보 선택", 
         options=["자녀", "전화번호", "주소", "비즈니스 주소", "생년월일"], 
         default=["자녀", "전화번호", "주소", "비즈니스 주소"]
     )
     
-    if st.button("📄 한글 PDF 생성"):
+    if st.button("📄 한글 PDF 생성 및 다운로드"):
         pdf = FPDF()
         try:
             pdf.add_font('Nanum', '', 'NanumGothic.ttc')
             pdf.set_font('Nanum', '', 12)
             font_ok = True
-        except Exception as e:
-            st.warning(f"⚠️ NanumGothic.ttc 연결 실패: {e}. 영문으로 출력합니다.")
+        except:
             pdf.set_font("Arial", 'B', 12)
             font_ok = False
             
         pdf.add_page()
-        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
+        pdf.set_font('Nanum' if font_ok else 'Arial', 'B', 16)
+        pdf.cell(0, 10, "KKC Member Address Book", ln=True, align='C')
         pdf.ln(5)
-        
-        for idx, row in df.iterrows():
-            y = pdf.get_y()
-            if y > 240: pdf.add_page(); y = pdf.get_y()
+
+        # 주소 기준 그룹화
+        df['주소_key'] = df['주소'].str.strip()
+        grouped = df.groupby('주소_key', sort=False)
+
+        for addr, group in grouped:
+            # 성함 직분 형식: 김금옥 협동권사 (괄호 제거)
+            names_roles = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
+            rep = group.iloc[0] 
             
-            if row['사진'] and "base64," in row['사진']:
+            y = pdf.get_y()
+            if y > 230: pdf.add_page(); y = pdf.get_y()
+            
+            # 사진 출력 (base64 수정)
+            if rep['사진'] and "base64," in rep['사진']:
                 try:
-                    img_data = base64.decode(row['사진'].split(",")[1])
+                    img_b64 = rep['사진'].split(",")[1]
+                    img_data = base64.b64decode(img_b64)
                     pdf.image(Image.open(io.BytesIO(img_data)), x=10, y=y, w=35, h=35)
                 except: pdf.rect(10, y, 35, 35)
             else: pdf.rect(10, y, 35, 35)
             
+            # 정보 출력
             pdf.set_xy(50, y)
-            pdf.set_font('Nanum' if font_ok else 'Arial', 'B' if not font_ok else '', 12)
-            pdf.cell(0, 8, f"{row['이름']} ({row['직분']})", ln=True)
+            pdf.set_font('Nanum' if font_ok else 'Arial', 'B', 12)
+            pdf.cell(0, 8, names_roles, ln=True)
+            
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
-            details = "\n".join([f"- {c}: {row[c]}" for c in inc_cols if row[c] and row[c] != "nan"])
-            pdf.multi_cell(0, 6, details)
-            pdf.ln(15)
+            
+            # 항목 리스트 (대시 제거)
+            info_list = []
+            for col in inc_cols:
+                val = rep[col]
+                if val and val != "nan" and val != "":
+                    info_list.append(f"{col}: {val}")
+            
+            pdf.multi_cell(0, 6, "\n".join(info_list))
+            pdf.ln(12)
 
+        date_str = datetime.now().strftime('%Y%m%d')
+        file_name = f"KKC_AddressBook_{date_str}.pdf"
         pdf_out = pdf.output() 
-        st.download_button("📥 PDF 다운로드", data=bytes(pdf_out), file_name="address_book.pdf", mime="application/pdf")
+        st.download_button("📥 PDF 다운로드", data=bytes(pdf_out), file_name=file_name, mime="application/pdf")
 
 # 4. 관리자용 PDF 초기화
 elif menu == "4. (관리자용) PDF 초기화":
     st.header("⚠️ 데이터 초기화")
-    # ... 이전과 동일 ...
+    up_pdf = st.file_uploader("PDF 업로드", type="pdf")
+    if up_pdf and st.button("실행"):
+        with st.spinner('변환 중...'):
+            with pdfplumber.open(up_pdf) as pdf_p:
+                all_data = []
+                for page in pdf_p.pages:
+                    tables = page.extract_tables()
+                    for table in tables:
+                        for row in table:
+                            if not row or row[1] is None: continue
+                            try:
+                                name = row[1].replace('\n', ' ')
+                                if name.replace(' ', '') in ["이름", "Name", "번호"]: continue
+                                role = row[2].replace('\n', ' ') if row[2] else ""
+                                all_data.append({
+                                    "사진": "", "이름": name, "직분": role, "상태": "출석 중", 
+                                    "전화번호": row[5] if len(row)>5 else "", 
+                                    "생년월일": "", "주소": row[3] if len(row)>3 else "", 
+                                    "비즈니스 주소": "", "자녀": row[6] if len(row)>6 else "", "심방기록": ""
+                                })
+                            except: continue
+                save_to_google(pd.DataFrame(all_data))
+            st.success("데이터가 초기화되었습니다!")
+            st.rerun()
