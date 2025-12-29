@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v2.2)")
+st.title("⛪ 킹스턴한인교회 교적부 (v2.2.1)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -90,16 +90,16 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # [수정] 첫 화면에서 사진이 보이도록 설정
+        # 첫 화면에서 사진이 보이도록 ImageColumn 설정
         edited_df = st.data_editor(
             results,
             column_config={
-                "사진": st.column_config.ImageColumn("사진", width="small"), # 이 부분이 핵심입니다
+                "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"]),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True, 
-            key="v2.2_editor"
+            key="v2.2.1_editor"
         )
         if st.button("💾 정보 저장하기", type="primary"):
             df.update(edited_df)
@@ -187,17 +187,19 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.cell(0, 10, "KKC Member Address Book", ln=True, align='C')
         pdf.ln(5)
 
+        # 주소 기준으로 가족 그룹화
         df['주소_key'] = df['주소'].str.strip()
         grouped = df.groupby('주소_key', sort=False)
 
         for addr, group in grouped:
+            # 이름 직분 형식 수정 (괄호 제거 및 dash 제거)
             names_roles = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             rep = group.iloc[0] 
             
             y = pdf.get_y()
             if y > 230: pdf.add_page(); y = pdf.get_y()
             
-            # [수정완료] base64.b64decode로 오타 수정
+            # 사진 출력 로직 (base64.b64decode 오타 수정 완료)
             if rep['사진'] and "base64," in rep['사진']:
                 try:
                     img_b64 = rep['사진'].split(",")[1]
@@ -213,6 +215,7 @@ elif menu == "3. PDF 주소록 만들기":
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
             
+            # 항목 리스트 (대시 없이 깔끔하게)
             info_list = []
             for col in inc_cols:
                 val = rep[col]
