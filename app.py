@@ -38,7 +38,11 @@ def get_sheet():
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
     except Exception as e:
-        st.error(f"구글 시트 연결 실패: {e}")
+        # 429 에러 발생 시 사용자에게 친절하게 안내
+        if "429" in str(e):
+            st.error("⚠️ 구글 서버 접속이 일시적으로 많습니다. 1분만 기다렸다가 새로고침(F5) 해주세요.")
+        else:
+            st.error(f"구글 시트 연결 실패: {e}")
         return None
 
 # --- 데이터 불러오기 ---
@@ -47,7 +51,6 @@ def load_data():
     if sheet:
         try:
             data = sheet.get_all_records()
-            # 비즈니스 주소 포함 컬럼 순서
             cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "비즈니스 주소", "자녀", "생년월일", "심방기록"]
             if not data: return pd.DataFrame(columns=cols)
             df = pd.DataFrame(data).astype(str)
@@ -87,7 +90,6 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # 명단 표시
         st.subheader(f"📊 검색 결과: {len(results)}명")
         edited_df = st.data_editor(
             results,
@@ -97,7 +99,7 @@ if menu == "1. 성도 검색 및 수정":
                 "심방기록": st.column_config.TextColumn("심방기록", width="large", help="상세 기록은 하단 '심방 기록' 탭을 이용하세요.")
             },
             use_container_width=True,
-            key="editor_v1.4"
+            key="editor_final"
         )
 
         if st.button("💾 표 수정사항 저장하기", type="primary"):
@@ -117,10 +119,8 @@ if menu == "1. 성도 검색 및 수정":
             
             with t1:
                 st.write(f"**{df.loc[sel_person, '이름']}** 성도님 심방 기록")
-                # 기존 기록 보여주기
                 st.text_area("기존 기록", value=df.loc[sel_person, '심방기록'], height=100, disabled=True)
                 
-                # 새 기록 입력 폼
                 with st.form("visit_log_form", clear_on_submit=True):
                     v_date = st.date_input("심방 날짜", datetime.now())
                     v_text = st.text_area("심방 내용")
@@ -141,15 +141,13 @@ if menu == "1. 성도 검색 및 수정":
                     up_file = st.file_uploader("사진 업로드", type=['jpg','jpeg','png'], key="photo_up")
                     if up_file:
                         img = Image.open(up_file)
-                        
-                        # 회전 기능
                         if "rot" not in st.session_state: st.session_state.rot = 0
                         if st.button("🔄 90도 회전"):
                             st.session_state.rot = (st.session_state.rot + 90) % 360
                         
                         img = img.rotate(-st.session_state.rot, expand=True)
                         
-                        # [수정] 에러 원인 제거 및 줌 설정
+                        # [에러 해결] use_container_width 삭제
                         cropped = st_cropper(img, aspect_ratio=(1,1), box_color="red")
                         
                         if st.button("이 사진으로 저장"):
@@ -187,7 +185,7 @@ elif menu == "2. 새가족 등록":
                 save_to_google(pd.concat([df, new_row], ignore_index=True))
                 st.success(f"{name} 성도님 등록 완료!")
 
-# --- 3. PDF 초기화 (생략) ---
+# --- 3. PDF 초기화 (필요시 복구 가능) ---
 elif menu == "3. (관리자용) PDF 초기화":
     st.header("⚠️ 데이터 초기화")
-    st.info("이전에 사용하던 PDF 변환 로직이 적용됩니다.")
+    st.warning("이 기능은 신중히 사용하세요.")
