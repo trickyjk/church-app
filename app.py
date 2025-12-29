@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v2.3 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v2.5)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -77,7 +77,7 @@ if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
     if not df.empty:
-        # [수정완료] 괄호 짝을 정확히 맞췄습니다.
+        # [문법 교정] 괄호 닫힘 확인
         col1, col2 = st.columns([2, 1]) 
         with col1:
             search = st.text_input("이름/전화번호 검색")
@@ -89,7 +89,7 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # [기능추가] 메인 화면 표에서 사진이 보이도록 설정
+        # 첫 화면에서 사진이 보이도록 설정
         edited_df = st.data_editor(
             results,
             column_config={
@@ -98,7 +98,7 @@ if menu == "1. 성도 검색 및 수정":
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v2.3_editor"
+            key="v2.5_main_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -125,35 +125,17 @@ if menu == "1. 성도 검색 및 수정":
                 up_file = st.file_uploader("사진 업로드")
                 if up_file:
                     img = Image.open(up_file)
+                    if "rot" not in st.session_state: st.session_state.rot = 0
                     if st.button("🔄 90도 회전"):
-                        if "rot" not in st.session_state: st.session_state.rot = 0
                         st.session_state.rot = (st.session_state.rot + 90) % 360
-                    img = img.rotate(-st.session_state.get("rot", 0), expand=True)
+                    img = img.rotate(-st.session_state.rot, expand=True)
                     cropped = st_cropper(img, aspect_ratio=(1,1))
                     if st.button("사진 저장"):
                         df.at[sel_person, '사진'] = image_to_base64(cropped)
                         save_to_google(df)
+                        st.session_state.rot = 0
                         st.success("변경 완료")
                         st.rerun()
-
-# 2. 새가족 등록
-elif menu == "2. 새가족 등록":
-    st.header("📝 새가족 등록")
-    with st.form("new_fam"):
-        c1, c2 = st.columns(2)
-        with c1:
-            name = st.text_input("이름 (필수)")
-            role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "목사"])
-            status = st.selectbox("상태", ["새가족", "출석 중"])
-        with c2:
-            phone = st.text_input("전화번호")
-            addr = st.text_input("주소")
-            biz = st.text_input("비즈니스 주소")
-        if st.form_submit_button("등록"):
-            df_curr = load_data()
-            new_row = pd.DataFrame([["", name, role, status, phone, "", addr, biz, "", ""]], columns=df_curr.columns)
-            save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
-            st.success("등록 완료")
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
@@ -164,29 +146,28 @@ elif menu == "3. PDF 주소록 만들기":
     if st.button("📄 한글 PDF 생성"):
         pdf = FPDF()
         try:
-            # ttc 파일 처리 보강
-            pdf.add_font('Nanum', '', 'NanumGothic.ttc', index=0) 
+            # [파일명 수정] 목사님이 올리신 실제 파일명으로 연동
+            pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf') 
             pdf.set_font('Nanum', '', 12)
             font_ok = True
         except Exception as e:
-            st.warning(f"폰트 인식 실패: {e}")
+            st.warning(f"폰트 인식 실패(영문 출력): {e}")
             pdf.set_font("Arial", 'B', 12)
             font_ok = False
             
         pdf.add_page()
-        pdf.cell(0, 10, "KKC Address Book", ln=True, align='C')
+        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
 
-        # 주소로 가족 묶기
         df['addr_key'] = df['주소'].str.strip()
         for addr, group in df.groupby('addr_key', sort=False):
-            # [수정] 성함 직분 형식 변경 및 괄호 제거
+            # 괄호 제거 및 김금옥 협동권사 형식
             names = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             rep = group.iloc[0]
             y = pdf.get_y()
             if y > 240: pdf.add_page(); y = pdf.get_y()
             
-            # 사진 (base64.b64decode 오타 수정됨)
+            # 사진 (함수명 b64decode 교정)
             if rep['사진'] and "base64," in rep['사진']:
                 try:
                     img_data = base64.b64decode(rep['사진'].split(",")[1])
@@ -200,10 +181,10 @@ elif menu == "3. PDF 주소록 만들기":
             
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
-            # [수정] 대시(-) 제거
-            details = "\n".join([f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan"])
+            # 대시(-) 제거 및 항목 표시
+            details = "\n".join([f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan" and rep[c] != ""])
             pdf.multi_cell(0, 6, details)
             pdf.ln(12)
 
-        pdf_out = pdf.output()
-        st.download_button("📥 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
+        pdf_bytes = pdf.output()
+        st.download_button("📥 PDF 다운로드", data=bytes(pdf_bytes), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
