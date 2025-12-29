@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v1.9.1)")
+st.title("⛪ 킹스턴한인교회 교적부 (v1.9.2)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -79,7 +79,7 @@ if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
     if not df.empty:
-        col1, col2 = st.columns([2, 1]) # [수정완료] 괄호 닫힘 확인
+        col1, col2 = st.columns([2, 1])
         with col1:
             search = st.text_input("이름/전화번호 검색")
         with col2:
@@ -99,7 +99,7 @@ if menu == "1. 성도 검색 및 수정":
                 "심방기록": st.column_config.TextColumn("심방기록", width="large")
             },
             use_container_width=True,
-            key="v1.9.1_editor"
+            key="v1.9.2_editor"
         )
 
         if st.button("💾 정보 저장하기", type="primary"):
@@ -172,16 +172,17 @@ elif menu == "3. PDF 주소록 만들기":
     if st.button("📄 한글 PDF 생성"):
         pdf = FPDF()
         try:
-            pdf.add_font('Nanum', '', 'NanumGothic.ttf')
+            # [수정] 나눔고딕 ttc 파일명으로 연동
+            pdf.add_font('Nanum', '', 'NanumGothic.ttc')
             pdf.set_font('Nanum', '', 12)
             font_ok = True
-        except:
-            st.warning("⚠️ NanumGothic.ttf 파일을 찾을 수 없습니다.")
+        except Exception as e:
+            st.warning(f"⚠️ NanumGothic.ttc 연결 실패: {e}. 영문으로 출력합니다.")
             pdf.set_font("Arial", 'B', 12)
             font_ok = False
             
         pdf.add_page()
-        pdf.cell(0, 10, "Church Address Book", ln=True, align='C')
+        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
         
         for idx, row in df.iterrows():
@@ -212,5 +213,25 @@ elif menu == "4. (관리자용) PDF 초기화":
     st.header("⚠️ 데이터 초기화")
     up_pdf = st.file_uploader("초기화용 PDF 업로드", type="pdf")
     if up_pdf and st.button("초기화 시작"):
-        # ... [생략 방지용 초기화 로직] ...
-        st.success("초기화 완료!")
+        with st.spinner('변환 중...'):
+            with pdfplumber.open(up_pdf) as pdf_p:
+                all_data = []
+                for page in pdf_p.pages:
+                    tables = page.extract_tables()
+                    for table in tables:
+                        for row in table:
+                            if not row or row[1] is None: continue
+                            try:
+                                name = row[1].replace('\n', ' ')
+                                if name.replace(' ', '') in ["이름", "Name", "번호"]: continue
+                                role = row[2].replace('\n', ' ') if row[2] else ""
+                                all_data.append({
+                                    "사진": "", "이름": name, "직분": role, "상태": "출석 중", 
+                                    "전화번호": row[5] if len(row)>5 else "", 
+                                    "생년월일": "", "주소": row[3] if len(row)>3 else "", 
+                                    "비즈니스 주소": "", "자녀": row[6] if len(row)>6 else "", "심방기록": ""
+                                })
+                            except: continue
+                save_to_google(pd.DataFrame(all_data))
+            st.success("데이터가 초기화되었습니다!")
+            st.rerun()
