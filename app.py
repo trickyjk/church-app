@@ -203,8 +203,8 @@ if menu == "1. 성도 검색 및 수정":
                     "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
                     "주소": st.column_config.TextColumn("주소", width="large"),
                     "자녀": st.column_config.TextColumn("자녀", width="medium"),
-                    # [변경] TextColumn으로 설정하여 8자리 입력 허용
-                    "생년월일": st.column_config.TextColumn("생년월일", width="medium", placeholder="19710116", help="숫자 8자리만 입력하면 저장 시 자동 변환됩니다."),
+                    # [수정됨] placeholder 제거 (에러 해결)
+                    "생년월일": st.column_config.TextColumn("생년월일", width="medium", help="숫자 8자리만 입력하면 저장 시 자동 변환됩니다."),
                     "심방기록": st.column_config.TextColumn("심방기록", width="large")
                 },
                 num_rows="dynamic",
@@ -319,46 +319,3 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
     if uploaded_file and st.button("초기화 및 변환 시작"):
         with st.spinner('변환 중...'):
             with pdfplumber.open(uploaded_file) as pdf:
-                all_data = []
-                last_valid_address = "" 
-                last_valid_children = "" 
-
-                for page in pdf.pages:
-                    tables = page.extract_tables()
-                    for table in tables:
-                        for row in table:
-                            if not row or row[1] is None: continue
-                            try:
-                                name = row[1].replace('\n', ' ') if row[1] else ""
-                                if name.replace(' ', '') in ["이름", "Name", "번호"]: continue
-                                if row[0] == '번호': continue
-                                role = row[2].replace('\n', ' ') if row[2] else ""
-                                raw_address = row[3].replace('\n', ' ') if row[3] else ""
-                                raw_children = row[6].replace('\n', ', ') if len(row) > 6 and row[6] else ""
-                                cell = row[5].replace('\n', ', ') if len(row) > 5 and row[5] else ""
-                                
-                                if raw_address.strip() != "":
-                                    final_address = raw_address
-                                    last_valid_address = raw_address
-                                else:
-                                    final_address = last_valid_address
-                                
-                                if raw_children.strip() != "":
-                                    final_children = raw_children
-                                    last_valid_children = raw_children
-                                else:
-                                    final_children = last_valid_children
-
-                                all_data.append({
-                                    "사진": "", 
-                                    "이름": name, "상태": "출석 중", "직분": role, 
-                                    "전화번호": cell, "주소": final_address, 
-                                    "자녀": final_children,
-                                    "생년월일": "", "심방기록": ""
-                                })
-                            except: continue
-                new_df = pd.DataFrame(all_data)
-                cols = ["사진", "이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
-                new_df = new_df[cols]
-                save_to_google(new_df)
-            st.success(f"✅ 완료! 총 {len(new_df)}명 업로드됨")
