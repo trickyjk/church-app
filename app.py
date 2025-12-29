@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v2.2.1)")
+st.title("⛪ 킹스턴한인교회 교적부 (v2.3 최종)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -40,7 +40,7 @@ def get_sheet():
         return client.open(SHEET_NAME).sheet1
     except Exception as e:
         if "429" in str(e):
-            st.error("⚠️ 구글 서버 접속 지연. 1분 후 새로고침 해주세요.")
+            st.error("⚠️ 접속 과부하. 1분 후 새로고침 해주세요.")
         return None
 
 # --- 데이터 불러오기 ---
@@ -54,8 +54,6 @@ def load_data():
             df = pd.DataFrame(data).astype(str)
             for c in cols:
                 if c not in df.columns: df[c] = ""
-            if '이름' in df.columns:
-                df = df[~df['이름'].str.replace(' ', '').isin(['이름', 'Name', '번호'])]
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
@@ -72,15 +70,14 @@ def save_to_google(df):
         sheet.update(data_to_upload)
 
 # --- 사이드바 메뉴 ---
-menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기", "4. (관리자용) PDF 초기화"])
+menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
 # 1. 성도 검색 및 수정
 if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
     if not df.empty:
-        # [수정완료] 괄호 오타 해결
-        col1, col2 = st.columns([2, 1]) 
+        col1, col2 = st.columns([2, 1])
         with col1:
             search = st.text_input("이름/전화번호 검색")
         with col2:
@@ -91,32 +88,32 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # [수정완료] 첫 화면에서 사진이 보이도록 ImageColumn 설정
+        # 메인 화면 사진 표시 설정
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
-                "직분": st.column_config.SelectboxColumn("직분", options=["목사", "전도사", "장로", "권사", "집사", "성도", "청년"]),
+                "직분": st.column_config.SelectboxColumn("직분", options=["목사", "장로", "권사", "집사", "성도", "청년"]),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
-            use_container_width=True, 
-            key="v2.2.1_editor"
+            use_container_width=True,
+            key="v2.3_editor"
         )
-        if st.button("💾 정보 저장하기", type="primary"):
+        if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
             save_to_google(df)
-            st.success("저장되었습니다!")
+            st.success("저장되었습니다.")
             st.rerun()
 
         st.divider()
         if not results.empty:
             sel_person = st.selectbox("관리 대상 선택:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '생년월일']})")
-            t1, t2 = st.tabs(["✍️ 심방 기록", "📷 사진 변경/회전"])
+            t1, t2 = st.tabs(["✍️ 심방 기록", "📷 사진 변경"])
             with t1:
                 st.text_area("기존 기록", value=df.loc[sel_person, '심방기록'], height=100, disabled=True)
                 with st.form("v_form"):
                     v_text = st.text_area("새 내용")
-                    if st.form_submit_button("기록 저장"):
+                    if st.form_submit_button("저장"):
                         log = f"[{datetime.now().strftime('%Y-%m-%d')}] {v_text}"
                         old = df.at[sel_person, '심방기록']
                         df.at[sel_person, '심방기록'] = f"{old} | {log}" if old and old != "nan" else log
@@ -127,16 +124,15 @@ if menu == "1. 성도 검색 및 수정":
                 up_file = st.file_uploader("사진 업로드")
                 if up_file:
                     img = Image.open(up_file)
-                    if "rot" not in st.session_state: st.session_state.rot = 0
                     if st.button("🔄 90도 회전"):
+                        if "rot" not in st.session_state: st.session_state.rot = 0
                         st.session_state.rot = (st.session_state.rot + 90) % 360
-                    img = img.rotate(-st.session_state.rot, expand=True)
+                    img = img.rotate(-st.session_state.get("rot", 0), expand=True)
                     cropped = st_cropper(img, aspect_ratio=(1,1))
                     if st.button("사진 저장"):
                         df.at[sel_person, '사진'] = image_to_base64(cropped)
                         save_to_google(df)
-                        st.session_state.rot = 0
-                        st.success("사진 변경 완료!")
+                        st.success("변경 완료")
                         st.rerun()
 
 # 2. 새가족 등록
@@ -148,86 +144,63 @@ elif menu == "2. 새가족 등록":
             name = st.text_input("이름 (필수)")
             role = st.selectbox("직분", ["성도", "청년", "집사", "권사", "장로", "목사"])
             status = st.selectbox("상태", ["새가족", "출석 중"])
-            phone = st.text_input("전화번호")
         with c2:
-            birth = st.text_input("생년월일 (8자리)", placeholder="19900101")
+            phone = st.text_input("전화번호")
             addr = st.text_input("주소")
-            biz_addr = st.text_input("비즈니스 주소")
-            child = st.text_input("자녀")
-        if st.form_submit_button("등록하기"):
-            if not name: st.error("이름을 입력해주세요.")
-            else:
-                if len(birth) == 8: birth = f"{birth[:4]}-{birth[4:6]}-{birth[6:]}"
-                df_curr = load_data()
-                new_row = pd.DataFrame([["", name, role, status, phone, birth, addr, biz_addr, child, ""]], columns=df_curr.columns)
-                save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
-                st.success("등록 완료!")
+            biz = st.text_input("비즈니스 주소")
+        if st.form_submit_button("등록"):
+            df_curr = load_data()
+            new_row = pd.DataFrame([["", name, role, status, phone, "", addr, biz, "", ""]], columns=df_curr.columns)
+            save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
+            st.success("등록 완료")
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
-    st.header("🖨️ PDF 주소록 생성 (가족 단위 정렬)")
+    st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
-    inc_cols = st.multiselect(
-        "포함 정보 선택", 
-        options=["자녀", "전화번호", "주소", "비즈니스 주소", "생년월일"], 
-        default=["자녀", "전화번호", "주소", "비즈니스 주소"]
-    )
+    inc_cols = st.multiselect("포함 정보", options=["자녀", "전화번호", "주소", "비즈니스 주소"], default=["자녀", "전화번호", "주소", "비즈니스 주소"])
     
     if st.button("📄 한글 PDF 생성"):
         pdf = FPDF()
         try:
-            pdf.add_font('Nanum', '', 'NanumGothic.ttc')
+            # ttc 파일 처리 보강
+            pdf.add_font('Nanum', '', 'NanumGothic.ttc', index=0) 
             pdf.set_font('Nanum', '', 12)
             font_ok = True
-        except:
+        except Exception as e:
+            st.warning(f"폰트 인식 실패: {e}")
             pdf.set_font("Arial", 'B', 12)
             font_ok = False
             
         pdf.add_page()
-        pdf.set_font('Nanum' if font_ok else 'Arial', 'B', 16)
-        pdf.cell(0, 10, "KKC Member Address Book", ln=True, align='C')
+        pdf.cell(0, 10, "KKC Address Book", ln=True, align='C')
         pdf.ln(5)
 
-        df['주소_key'] = df['주소'].str.strip()
-        grouped = df.groupby('주소_key', sort=False)
-
-        for addr, group in grouped:
-            names_roles = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
-            rep = group.iloc[0] 
-            
+        # 주소로 가족 묶기
+        df['addr_key'] = df['주소'].str.strip()
+        for addr, group in df.groupby('addr_key', sort=False):
+            names = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
+            rep = group.iloc[0]
             y = pdf.get_y()
-            if y > 230: pdf.add_page(); y = pdf.get_y()
+            if y > 240: pdf.add_page(); y = pdf.get_y()
             
-            # [수정완료] base64.b64decode로 오타 수정
+            # 사진 (오타 수정됨)
             if rep['사진'] and "base64," in rep['사진']:
                 try:
-                    img_b64 = rep['사진'].split(",")[1]
-                    img_data = base64.b64decode(img_b64)
+                    img_data = base64.b64decode(rep['사진'].split(",")[1])
                     pdf.image(Image.open(io.BytesIO(img_data)), x=10, y=y, w=35, h=35)
                 except: pdf.rect(10, y, 35, 35)
             else: pdf.rect(10, y, 35, 35)
             
             pdf.set_xy(50, y)
             pdf.set_font('Nanum' if font_ok else 'Arial', 'B', 12)
-            pdf.cell(0, 8, names_roles, ln=True)
+            pdf.cell(0, 8, names, ln=True)
             
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             pdf.set_x(50)
-            
-            info_list = []
-            for col in inc_cols:
-                val = rep[col]
-                if val and val != "nan" and val != "":
-                    info_list.append(f"{col}: {val}")
-            
-            pdf.multi_cell(0, 6, "\n".join(info_list))
+            details = "\n".join([f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan"])
+            pdf.multi_cell(0, 6, details)
             pdf.ln(12)
 
-        date_str = datetime.now().strftime('%Y%m%d')
-        pdf_out = pdf.output() 
-        st.download_button("📥 PDF 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{date_str}.pdf", mime="application/pdf")
-
-# 4. 관리자용 PDF 초기화
-elif menu == "4. (관리자용) PDF 초기화":
-    st.header("⚠️ 데이터 초기화")
-    # ... 이전 로직과 동일 ...
+        pdf_out = pdf.output()
+        st.download_button("📥 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
