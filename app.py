@@ -14,10 +14,17 @@ SHEET_NAME = '교적부_데이터'
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
 st.title("⛪ 킹스턴한인교회 교적부 (Online)")
 
-# --- 구글 시트 연결 함수 ---
+# --- [핵심 수정] 구글 시트 연결 함수 (하이브리드 방식) ---
 def get_sheet():
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, SCOPE)
+        # 1. 스트림릿 클라우드 비밀금고(Secrets) 확인
+        if "gcp_service_account" in st.secrets:
+            creds_dict = st.secrets["gcp_service_account"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+        # 2. 내 컴퓨터 파일(secrets.json) 확인
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, SCOPE)
+            
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
     except Exception as e:
@@ -36,12 +43,10 @@ def load_data():
             df = pd.DataFrame(data)
             df = df.astype(str)
             
-            # [삭제 필터] 이름 헤더 제거
             if '이름' in df.columns:
                 clean_name = df['이름'].str.replace(' ', '')
                 df = df[~clean_name.isin(['이름', 'Name', '번호'])]
 
-            # 날짜 변환
             if '생년월일' in df.columns:
                 df['생년월일'] = pd.to_datetime(df['생년월일'], errors='coerce').dt.date
 
@@ -68,15 +73,13 @@ def save_to_google(df):
 # --- 사이드바 메뉴 ---
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. (관리자용) PDF로 데이터 초기화"])
 
-# ==========================================
 # 1. 성도 검색 및 수정
-# ==========================================
 if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     
     with st.spinner('데이터 불러오는 중...'):
         df = load_data()
-        total_count = len(df) # 전체 인원수 기억하기
+        total_count = len(df)
     
     if not df.empty:
         col1, col2 = st.columns([2, 1])
@@ -88,7 +91,6 @@ if menu == "1. 성도 검색 및 수정":
 
         delete_mode = st.checkbox("🗑️ 삭제 모드")
 
-        # 필터링 로직
         results = df.copy()
         if selected_status:
             results = results[results['상태'].isin(selected_status)]
@@ -96,7 +98,6 @@ if menu == "1. 성도 검색 및 수정":
             mask = results['이름'].str.contains(search, na=False) | results['전화번호'].str.contains(search, na=False)
             results = results[mask]
 
-        # 인원수 표시 로직
         filtered_count = len(results)
         is_filtered = (len(selected_status) > 0) or (search != "")
         
@@ -105,10 +106,8 @@ if menu == "1. 성도 검색 및 수정":
         else:
              st.info(f"📊 **전체 성도: {total_count}명**")
 
-        # --- 데이터 에디터 ---
         if delete_mode:
             results.insert(0, "삭제선택", False)
-            
             edited_df = st.data_editor(
                 results,
                 column_config={
@@ -130,10 +129,7 @@ if menu == "1. 성도 검색 및 수정":
                 if not to_delete.empty:
                     delete_indices = []
                     for idx, row in to_delete.iterrows():
-                        match = df[
-                            (df['이름'] == row['이름']) & 
-                            (df['전화번호'] == row['전화번호'])
-                        ]
+                        match = df[(df['이름'] == row['이름']) & (df['전화번호'] == row['전화번호'])]
                         delete_indices.extend(match.index.tolist())
                     
                     final_df = df.drop(index=delete_indices)
@@ -143,7 +139,6 @@ if menu == "1. 성도 검색 및 수정":
                     st.rerun()
                 else:
                     st.warning("삭제할 성도를 선택해주세요.")
-                
         else:
             edited_df = st.data_editor(
                 results,
@@ -162,7 +157,7 @@ if menu == "1. 성도 검색 및 수정":
 
             if st.button("💾 변경사항 저장하기", type="primary"):
                 if search or selected_status:
-                    st.warning("⚠️ 필터/검색어를 지우고 전체 목록에서 수정 후 저장해주세요. (데이터 보호)")
+                    st.warning("⚠️ 필터/검색어를 지우고 전체 목록에서 수정 후 저장해주세요.")
                 else:
                     with st.spinner('저장 중...'):
                         save_df = edited_df.copy()
@@ -173,9 +168,7 @@ if menu == "1. 성도 검색 및 수정":
     else:
         st.info("데이터가 없습니다. (PDF를 등록해주세요)")
 
-# ==========================================
 # 2. 새가족 등록
-# ==========================================
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
     with st.form("new_member_form", clear_on_submit=True):
@@ -206,12 +199,9 @@ elif menu == "2. 새가족 등록":
                     }])
                     updated_df = pd.concat([current_df, new_data], ignore_index=True)
                     save_to_google(updated_df)
-                    
                 st.success(f"🎉 '{name}' 성도님 등록 완료!")
 
-# ==========================================
 # 3. PDF 초기화
-# ==========================================
 elif menu == "3. (관리자용) PDF로 데이터 초기화":
     st.header("⚠️ 데이터베이스 초기화")
     st.info("구글 시트의 모든 데이터가 삭제되고 PDF로 교체됩니다.")
@@ -233,12 +223,10 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
                                 name = row[1].replace('\n', ' ') if row[1] else ""
                                 if name.replace(' ', '') in ["이름", "Name", "번호"]: continue
                                 if row[0] == '번호': continue
-
                                 role = row[2].replace('\n', ' ') if row[2] else ""
                                 raw_address = row[3].replace('\n', ' ') if row[3] else ""
                                 raw_children = row[6].replace('\n', ', ') if len(row) > 6 and row[6] else ""
                                 cell = row[5].replace('\n', ', ') if len(row) > 5 and row[5] else ""
-
                                 if raw_address.strip() != "":
                                     final_address = raw_address
                                     final_children = raw_children
@@ -258,10 +246,8 @@ elif menu == "3. (관리자용) PDF로 데이터 초기화":
                                     "생년월일": "", "심방기록": ""
                                 })
                             except: continue
-                
                 new_df = pd.DataFrame(all_data)
                 cols = ["이름", "상태", "직분", "전화번호", "주소", "자녀", "생년월일", "심방기록"]
                 new_df = new_df[cols]
                 save_to_google(new_df)
-                
             st.success(f"✅ 완료! 총 {len(new_df)}명 업로드됨")
