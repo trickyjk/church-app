@@ -5,4 +5,4 @@ gspread
 oauth2client
 streamlit-cropper
 Pillow
-fpdf
+fpdf2
