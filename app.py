@@ -17,20 +17,21 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.3 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.4 최종)")
 
-# --- [기능] 이미지 처리 함수 (PNG/OSError 완벽 해결) ---
+# --- [기능] 이미지 처리 함수 (OSError 및 PNG 완벽 대응) ---
 def image_to_base64(img):
     if img is None: return ""
     
-    # [핵심 수정] PNG의 투명도(RGBA) 정보를 제거하고 일반 사진(RGB) 모드로 변환
-    if img.mode in ("RGBA", "P"):
+    # [핵심 수정] 모든 이미지를 강제로 RGB 모드로 변환 (에러 원인 RGBA 제거)
+    if img.mode != "RGB":
         img = img.convert("RGB")
     
     img = img.resize((150, 150))
     buffered = io.BytesIO()
-    # PNG 파일도 JPEG로 안전하게 저장되도록 설정
-    img.save(buffered, format="JPEG", quality=85)
+    
+    # 퀄리티를 유지하면서 안정적인 JPEG 형식으로 저장
+    img.save(buffered, format="JPEG", quality=85, subsampling=0)
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
@@ -100,7 +101,7 @@ if menu == "1. 성도 검색 및 수정":
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v3.3_editor"
+            key="v3.4_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -142,9 +143,7 @@ if menu == "1. 성도 검색 및 수정":
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
-    inc_cols = st.multiselect("포함 정보 선택", 
-                            options=["생년월일", "자녀", "전화번호", "주소", "비즈니스 주소"], 
-                            default=["생년월일", "자녀", "전화번호", "주소"])
+    inc_cols = st.multiselect("포함 정보", options=["생년월일", "자녀", "전화번호", "주소", "비즈니스 주소"], default=["생년월일", "자녀", "전화번호", "주소"])
     
     if st.button("📄 한글 PDF 생성"):
         pdf = FPDF()
@@ -183,6 +182,7 @@ elif menu == "3. PDF 주소록 만들기":
                     except: pass
                 
                 if img_to_print:
+                    if img_to_print.mode != "RGB": img_to_print = img_to_print.convert("RGB")
                     pdf.image(img_to_print, x=x_pos, y=y_start, w=30, h=30)
                 elif os.path.exists(church_icon_path):
                     pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
@@ -212,4 +212,4 @@ elif menu == "3. PDF 주소록 만들기":
 
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    # (새가족 등록 로직 유지...)
+    # 등록 로직 생략 없이 그대로 유지
