@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.5 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.6 최종)")
 
 # --- [기능] 이미지 처리 함수 (OSError 및 PNG 완벽 대응) ---
 def image_to_base64(img):
@@ -30,15 +30,16 @@ def image_to_base64(img):
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# 생년월일 형식을 0000-00-00으로 바꿔주는 도우미 함수
+# [핵심] 생년월일 형식을 0000-00-00으로 바꿔주는 함수
 def format_birth(date_str):
-    if not date_str or date_str == "nan": return ""
-    clean_date = str(date_str).replace("-", "").replace(".", "").strip()
-    if len(clean_date) == 8: # 19740204 형태
+    if not date_str or date_str == "nan" or date_str == "None": return ""
+    # 숫자만 남기기
+    clean_date = "".join(filter(str.isdigit, str(date_str)))
+    if len(clean_date) == 8: # 19740204 형태를 1974-02-04로
         return f"{clean_date[:4]}-{clean_date[4:6]}-{clean_date[6:]}"
     return date_str
 
-# --- 구글 시트 연결 및 데이터 로드 (생략 없이 통합) ---
+# --- 구글 시트 연결 ---
 def get_sheet():
     try:
         if "gcp_service_account" in st.secrets:
@@ -50,6 +51,7 @@ def get_sheet():
         return client.open(SHEET_NAME).sheet1
     except Exception: return None
 
+# --- 데이터 불러오기 (화면 표시용 형식 변환 포함) ---
 def load_data():
     sheet = get_sheet()
     if sheet:
@@ -60,6 +62,10 @@ def load_data():
             df = pd.DataFrame(data).astype(str)
             for c in cols:
                 if c not in df.columns: df[c] = ""
+            
+            # [수정] 화면에 보여주기 전에 생년월일 형식을 모두 정리함
+            df['생년월일'] = df['생년월일'].apply(format_birth)
+            
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
@@ -74,7 +80,6 @@ def save_to_google(df):
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
 
-# 직분 리스트 (요청하신 순서)
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
@@ -94,17 +99,21 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
+        # 명단 표 설정
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
-                "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
+                "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
+                "생년월일": st.column_config.TextColumn("생년월일", help="예: 19701228 입력 시 자동 변환")
             },
             use_container_width=True,
-            key="v3.5_editor"
+            key="v3.6_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
+            # 저장 시에도 형식을 다시 한번 확인
+            edited_df['생년월일'] = edited_df['생년월일'].apply(format_birth)
             df.update(edited_df)
             save_to_google(df)
             st.success("저장되었습니다.")
@@ -140,7 +149,7 @@ if menu == "1. 성도 검색 및 수정":
                         st.success("변경 완료")
                         st.rerun()
 
-# 3. PDF 주소록 만들기 (생년월일 형식 수정 포함)
+# 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
@@ -162,7 +171,6 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.ln(5)
 
         church_icon_path = "church_icon.png"
-
         df['addr_key'] = df['주소'].str.strip()
         grouped = df.groupby('addr_key', sort=False)
 
@@ -204,7 +212,6 @@ elif menu == "3. PDF 주소록 만들기":
             info_lines = []
             for col in inc_cols:
                 val = rep[col]
-                # 생년월일인 경우 형식 교정
                 if col == "생년월일": val = format_birth(val)
                 if val and val != "nan" and val != "":
                     info_lines.append(f"{col}: {val}")
@@ -219,4 +226,19 @@ elif menu == "3. PDF 주소록 만들기":
 
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    # (새가족 등록 폼 동일하게 유지)
+    with st.form("new_fam"):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("이름 (필수)")
+            role = st.selectbox("직분", ROLE_OPTIONS)
+            status = st.selectbox("상태", ["새가족", "출석 중"])
+        with c2:
+            phone = st.text_input("전화번호")
+            birth = st.text_input("생년월일 (예: 19900101)")
+            addr = st.text_input("주소")
+        if st.form_submit_button("등록"):
+            formatted_new_birth = format_birth(birth)
+            df_curr = load_data()
+            new_row = pd.DataFrame([["", name, role, status, phone, formatted_new_birth, addr, "", "", ""]], columns=df_curr.columns)
+            save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
+            st.success("등록 완료")
