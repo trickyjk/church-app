@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v4.8)")
+st.title("⛪ 킹스턴한인교회 교적부 (v5.0)")
 
 # --- [기능] 데이터 포맷 및 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -74,7 +74,7 @@ def load_data():
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
-        except: return pd.DataFrame(columns=["사진", "이름", "직분", "신급", "상태", "전화번호", "이메일", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록", "등록신청일", "등록일", "사역이력"])
+        except: return pd.DataFrame(columns=cols)
     return pd.DataFrame()
 
 def save_to_google(df):
@@ -89,7 +89,6 @@ def save_to_google(df):
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
 
-# 옵션 설정
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 FAITH_OPTIONS = ["유아세례", "입교", "세례", "해당없음"]
 STATUS_OPTIONS = ["출석 중", "새가족", "장기결석", "한국 체류", "타지역 체류", "유학 종료", "전출"]
@@ -112,7 +111,6 @@ if menu == "1. 성도 검색 및 수정":
                               results['전화번호'].str.contains(search, na=False) | 
                               results['사역이력'].str.contains(search, na=False)]
 
-        # [수정 포인트] 생년월일 min_value와 max_value 범위를 1850~2100으로 확장
         edited_df = st.data_editor(
             results,
             column_config={
@@ -121,12 +119,10 @@ if menu == "1. 성도 검색 및 수정":
                 "신급": st.column_config.SelectboxColumn("신급", options=FAITH_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=STATUS_OPTIONS),
                 "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1850, 1, 1), max_value=date(2100, 12, 31)),
-                "등록신청일": st.column_config.DateColumn("등록신청일", format="YYYY-MM-DD", min_value=date(1850, 1, 1), max_value=date(2100, 12, 31)),
-                "등록일": st.column_config.DateColumn("등록일", format="YYYY-MM-DD", min_value=date(1850, 1, 1), max_value=date(2100, 12, 31)),
                 "전화번호": st.column_config.TextColumn("전화번호")
             },
             use_container_width=True,
-            key="v4.8_editor"
+            key="v5.0_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             edited_df['전화번호'] = edited_df['전화번호'].apply(format_phone)
@@ -176,13 +172,18 @@ if menu == "1. 성도 검색 및 수정":
 # 2. 새가족 등록
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    with st.form("new_fam"):
+    
+    # 폼 외부에서 성공 메시지를 보여주기 위해 세션 상태 활용
+    if 'reg_success' in st.session_state and st.session_state.reg_success:
+        st.success(f"✅ {st.session_state.last_name} 성도님 등록이 완료되었습니다!")
+        st.session_state.reg_success = False
+
+    with st.form("new_fam", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("이름 (필수)")
             role = st.selectbox("직분", ROLE_OPTIONS, index=6)
             faith = st.selectbox("신급", FAITH_OPTIONS)
-            # [수정 포인트] 새가족 등록 폼에서도 날짜 범위를 2100년까지 확장
             birth = st.date_input("생년월일", value=date(2000, 1, 1), min_value=date(1850, 1, 1), max_value=date(2100, 12, 31))
         with c2:
             phone = st.text_input("전화번호 (숫자만)")
@@ -192,17 +193,26 @@ elif menu == "2. 새가족 등록":
         
         note = st.text_area("목양 노트 (상담 내용)")
         
-        if st.form_submit_button("⛪ 등록"):
+        submit_button = st.form_submit_button("⛪ 성도 등록하기", type="primary")
+        
+        if submit_button:
             if name:
                 df_curr = load_data()
-                initial_log = f"[{datetime.now().strftime('%Y-%m-%d')} 등록상담] {note}" if note else ""
+                initial_log = note if note else ""
+                
                 new_row = pd.DataFrame([[
                     "", name, role, faith, "새가족", format_phone(phone), email, str(birth), addr, "", "", initial_log, str(date.today()), "", history
                 ]], columns=df_curr.columns)
+                
+                # 데이터 저장
                 save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
-                st.success(f"'{name}' 성도님 등록 완료!")
+                
+                # 성공 상태 저장 후 리런
+                st.session_state.reg_success = True
+                st.session_state.last_name = name
+                st.rerun()
             else:
-                st.error("이름을 입력하세요.")
+                st.error("⚠️ 이름을 입력해 주세요.")
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
