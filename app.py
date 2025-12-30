@@ -17,9 +17,9 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.6 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.7 최종)")
 
-# --- [기능] 이미지 처리 함수 (OSError 및 PNG 완벽 대응) ---
+# --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
     if img is None: return ""
     if img.mode != "RGB":
@@ -30,14 +30,16 @@ def image_to_base64(img):
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# [핵심] 생년월일 형식을 0000-00-00으로 바꿔주는 함수
-def format_birth(date_str):
-    if not date_str or date_str == "nan" or date_str == "None": return ""
-    # 숫자만 남기기
-    clean_date = "".join(filter(str.isdigit, str(date_str)))
-    if len(clean_date) == 8: # 19740204 형태를 1974-02-04로
-        return f"{clean_date[:4]}-{clean_date[4:6]}-{clean_date[6:]}"
-    return date_str
+# 날짜 텍스트를 파이썬 날짜 객체로 안전하게 바꾸는 도우미 함수
+def safe_to_date(val):
+    if not val or val == "nan" or val == "None": return None
+    clean_val = "".join(filter(str.isdigit, str(val)))
+    try:
+        if len(clean_val) == 8:
+            return datetime.strptime(clean_val, "%Y%m%d").date()
+        return pd.to_datetime(val).date()
+    except:
+        return None
 
 # --- 구글 시트 연결 ---
 def get_sheet():
@@ -51,7 +53,7 @@ def get_sheet():
         return client.open(SHEET_NAME).sheet1
     except Exception: return None
 
-# --- 데이터 불러오기 (화면 표시용 형식 변환 포함) ---
+# --- 데이터 불러오기 ---
 def load_data():
     sheet = get_sheet()
     if sheet:
@@ -63,8 +65,8 @@ def load_data():
             for c in cols:
                 if c not in df.columns: df[c] = ""
             
-            # [수정] 화면에 보여주기 전에 생년월일 형식을 모두 정리함
-            df['생년월일'] = df['생년월일'].apply(format_birth)
+            # 생년월일 컬럼을 날짜 형식으로 변환 (달력이 나오게 하기 위함)
+            df['생년월일'] = pd.to_datetime(df['생년월일'], errors='coerce').dt.date
             
             df = df[cols]
             df.index = range(1, len(df) + 1)
@@ -75,7 +77,12 @@ def load_data():
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
-        save_df = df.copy().fillna("")
+        save_df = df.copy()
+        # 저장 시에는 날짜를 다시 문자열(YYYY-MM-DD)로 변환하여 저장
+        for col in save_df.columns:
+            if save_df[col].dtype == 'object' or 'date' in str(save_df[col].dtype):
+                save_df[col] = save_df[col].astype(str).replace("NaT", "").replace("None", "")
+        
         sheet.clear()
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
@@ -99,21 +106,24 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # 명단 표 설정
+        # [핵심] DateColumn을 사용하여 달력 기능을 복구함
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.TextColumn("생년월일", help="예: 19701228 입력 시 자동 변환")
+                "생년월일": st.column_config.DateColumn(
+                    "생년월일",
+                    format="YYYY-MM-DD",
+                    min_value=datetime(1900, 1, 1),
+                    max_value=datetime(2100, 12, 31),
+                )
             },
             use_container_width=True,
-            key="v3.6_editor"
+            key="v3.7_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
-            # 저장 시에도 형식을 다시 한번 확인
-            edited_df['생년월일'] = edited_df['생년월일'].apply(format_birth)
             df.update(edited_df)
             save_to_google(df)
             st.success("저장되었습니다.")
@@ -149,7 +159,7 @@ if menu == "1. 성도 검색 및 수정":
                         st.success("변경 완료")
                         st.rerun()
 
-# 3. PDF 주소록 만들기
+# 3. PDF 주소록 만들기 (동일 유지)
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
@@ -211,9 +221,8 @@ elif menu == "3. PDF 주소록 만들기":
             rep = group.iloc[0]
             info_lines = []
             for col in inc_cols:
-                val = rep[col]
-                if col == "생년월일": val = format_birth(val)
-                if val and val != "nan" and val != "":
+                val = str(rep[col]) if rep[col] else ""
+                if val and val != "nan" and val != "None":
                     info_lines.append(f"{col}: {val}")
             
             pdf.set_x(110)
@@ -234,11 +243,10 @@ elif menu == "2. 새가족 등록":
             status = st.selectbox("상태", ["새가족", "출석 중"])
         with c2:
             phone = st.text_input("전화번호")
-            birth = st.text_input("생년월일 (예: 19900101)")
+            birth = st.date_input("생년월일", value=datetime(1980, 1, 1))
             addr = st.text_input("주소")
         if st.form_submit_button("등록"):
-            formatted_new_birth = format_birth(birth)
             df_curr = load_data()
-            new_row = pd.DataFrame([["", name, role, status, phone, formatted_new_birth, addr, "", "", ""]], columns=df_curr.columns)
+            new_row = pd.DataFrame([[ "", name, role, status, phone, str(birth), addr, "", "", ""]], columns=df_curr.columns)
             save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
             st.success("등록 완료")
