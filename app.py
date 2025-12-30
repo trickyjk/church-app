@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.7 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.8)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -29,17 +29,6 @@ def image_to_base64(img):
     img.save(buffered, format="JPEG", quality=85, subsampling=0)
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
-
-# 날짜 텍스트를 파이썬 날짜 객체로 안전하게 바꾸는 도우미 함수
-def safe_to_date(val):
-    if not val or val == "nan" or val == "None": return None
-    clean_val = "".join(filter(str.isdigit, str(val)))
-    try:
-        if len(clean_val) == 8:
-            return datetime.strptime(clean_val, "%Y%m%d").date()
-        return pd.to_datetime(val).date()
-    except:
-        return None
 
 # --- 구글 시트 연결 ---
 def get_sheet():
@@ -65,7 +54,7 @@ def load_data():
             for c in cols:
                 if c not in df.columns: df[c] = ""
             
-            # 생년월일 컬럼을 날짜 형식으로 변환 (달력이 나오게 하기 위함)
+            # 생년월일 컬럼을 날짜 형식으로 변환
             df['생년월일'] = pd.to_datetime(df['생년월일'], errors='coerce').dt.date
             
             df = df[cols]
@@ -78,9 +67,8 @@ def save_to_google(df):
     sheet = get_sheet()
     if sheet:
         save_df = df.copy()
-        # 저장 시에는 날짜를 다시 문자열(YYYY-MM-DD)로 변환하여 저장
         for col in save_df.columns:
-            if save_df[col].dtype == 'object' or 'date' in str(save_df[col].dtype):
+            if 'date' in str(save_df[col].dtype) or save_df[col].dtype == 'object':
                 save_df[col] = save_df[col].astype(str).replace("NaT", "").replace("None", "")
         
         sheet.clear()
@@ -106,22 +94,16 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # [핵심] DateColumn을 사용하여 달력 기능을 복구함
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.DateColumn(
-                    "생년월일",
-                    format="YYYY-MM-DD",
-                    min_value=datetime(1900, 1, 1),
-                    max_value=datetime(2100, 12, 31),
-                )
+                "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD")
             },
             use_container_width=True,
-            key="v3.7_editor"
+            key="v3.8_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -131,7 +113,13 @@ if menu == "1. 성도 검색 및 수정":
 
         st.divider()
         if not results.empty:
-            sel_person = st.selectbox("관리 대상 선택:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '생년월일']})")
+            # [수정] "대상 선택"으로 명칭 변경 및 이름(직분) 형식으로 표시
+            sel_person = st.selectbox(
+                "🎯 대상 선택:", 
+                results.index, 
+                format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '직분']})"
+            )
+            
             t1, t2 = st.tabs(["✍️ 심방 기록", "📷 사진 변경"])
             with t1:
                 st.text_area("기존 기록", value=df.loc[sel_person, '심방기록'], height=100, disabled=True)
@@ -195,7 +183,7 @@ elif menu == "3. PDF 주소록 만들기":
                 img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
-                        img_data = base64.b64decode(member['사진'].split(",")[1])
+                        img_data = base64.decode(member['사진'].split(",")[1])
                         img_to_print = Image.open(io.BytesIO(img_data))
                     except: pass
                 
