@@ -17,25 +17,28 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.4 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.5 최종)")
 
 # --- [기능] 이미지 처리 함수 (OSError 및 PNG 완벽 대응) ---
 def image_to_base64(img):
     if img is None: return ""
-    
-    # [핵심 수정] 모든 이미지를 강제로 RGB 모드로 변환 (에러 원인 RGBA 제거)
     if img.mode != "RGB":
         img = img.convert("RGB")
-    
     img = img.resize((150, 150))
     buffered = io.BytesIO()
-    
-    # 퀄리티를 유지하면서 안정적인 JPEG 형식으로 저장
     img.save(buffered, format="JPEG", quality=85, subsampling=0)
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# --- 구글 시트 연결 함수 ---
+# 생년월일 형식을 0000-00-00으로 바꿔주는 도우미 함수
+def format_birth(date_str):
+    if not date_str or date_str == "nan": return ""
+    clean_date = str(date_str).replace("-", "").replace(".", "").strip()
+    if len(clean_date) == 8: # 19740204 형태
+        return f"{clean_date[:4]}-{clean_date[4:6]}-{clean_date[6:]}"
+    return date_str
+
+# --- 구글 시트 연결 및 데이터 로드 (생략 없이 통합) ---
 def get_sheet():
     try:
         if "gcp_service_account" in st.secrets:
@@ -45,10 +48,8 @@ def get_sheet():
             creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, SCOPE)
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
-    except Exception:
-        return None
+    except Exception: return None
 
-# --- 데이터 불러오기 ---
 def load_data():
     sheet = get_sheet()
     if sheet:
@@ -62,8 +63,7 @@ def load_data():
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
-        except:
-            return pd.DataFrame(columns=["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"])
+        except: return pd.DataFrame(columns=["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"])
     return pd.DataFrame()
 
 def save_to_google(df):
@@ -74,6 +74,7 @@ def save_to_google(df):
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
 
+# 직분 리스트 (요청하신 순서)
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
@@ -101,7 +102,7 @@ if menu == "1. 성도 검색 및 수정":
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v3.4_editor"
+            key="v3.5_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -139,7 +140,7 @@ if menu == "1. 성도 검색 및 수정":
                         st.success("변경 완료")
                         st.rerun()
 
-# 3. PDF 주소록 만들기
+# 3. PDF 주소록 만들기 (생년월일 형식 수정 포함)
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
@@ -173,7 +174,6 @@ elif menu == "3. PDF 주소록 만들기":
             x_pos = 10
             for _, member in group.iterrows():
                 if x_pos > 85: break 
-                
                 img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
@@ -201,7 +201,14 @@ elif menu == "3. PDF 주소록 만들기":
             
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 10)
             rep = group.iloc[0]
-            info_lines = [f"{c}: {rep[c]}" for c in inc_cols if rep[c] and rep[c] != "nan" and rep[c] != ""]
+            info_lines = []
+            for col in inc_cols:
+                val = rep[col]
+                # 생년월일인 경우 형식 교정
+                if col == "생년월일": val = format_birth(val)
+                if val and val != "nan" and val != "":
+                    info_lines.append(f"{col}: {val}")
+            
             pdf.set_x(110)
             pdf.multi_cell(0, 6, "\n".join(info_lines))
             pdf.set_y(y_start + 45) 
@@ -212,4 +219,4 @@ elif menu == "3. PDF 주소록 만들기":
 
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
-    # 등록 로직 생략 없이 그대로 유지
+    # (새가족 등록 폼 동일하게 유지)
