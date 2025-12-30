@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v2.8 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.0 최종)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -67,7 +67,6 @@ def save_to_google(df):
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
 
-# 직분 리스트 및 사이드바
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
@@ -95,7 +94,7 @@ if menu == "1. 성도 검색 및 수정":
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v2.8_editor"
+            key="v3.0_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -175,8 +174,8 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
 
+        # 흑백 교회 아이콘 파일 경로 강제 지정
         church_icon_path = "church_icon.png"
-        has_icon = os.path.exists(church_icon_path)
 
         df['addr_key'] = df['주소'].str.strip()
         grouped = df.groupby('addr_key', sort=False)
@@ -187,25 +186,34 @@ elif menu == "3. PDF 주소록 만들기":
             y_start = pdf.get_y()
             if y_start > 230: pdf.add_page(); y_start = pdf.get_y()
             
-            # 가족 사진들을 나란히 배치 (부부 사진 함께 나오도록)
+            # 가족 사진들을 나란히 배치
             x_pos = 10
             for _, member in group.iterrows():
                 if x_pos > 85: break 
                 
-                # 사진이 있으면 해독, 없으면 교회 아이콘
+                # 사진 데이터가 있으면 출력, 없으면 업로드된 church_icon.png 출력
                 if member['사진'] and "base64," in member['사진']:
                     try:
                         img_data = base64.b64decode(member['사진'].split(",")[1])
                         pdf.image(Image.open(io.BytesIO(img_data)), x=x_pos, y=y_start, w=30, h=30)
                     except:
-                        if has_icon: pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
-                        else: pdf.rect(x_pos, y_start, 30, 30)
+                        if os.path.exists(church_icon_path):
+                            pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
+                        else:
+                            pdf.rect(x_pos, y_start, 30, 30)
                 else:
-                    if has_icon: pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
-                    else: pdf.rect(x_pos, y_start, 30, 30)
+                    if os.path.exists(church_icon_path):
+                        pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
+                    else:
+                        pdf.rect(x_pos, y_start, 30, 30)
+                
+                # 사진 밑에 이름 표시
+                pdf.set_xy(x_pos, y_start + 31)
+                pdf.set_font('Nanum' if font_ok else 'Arial', '', 8)
+                pdf.cell(30, 5, member['이름'], align='C')
                 x_pos += 32
 
-            # 이름과 정보 출력
+            # 정보 출력 (오른쪽 배치)
             names_text = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             pdf.set_xy(110, y_start) 
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 12)
@@ -217,8 +225,8 @@ elif menu == "3. PDF 주소록 만들기":
             
             pdf.set_x(110)
             pdf.multi_cell(0, 6, "\n".join(info_lines))
-            pdf.set_y(y_start + 45)
+            pdf.set_y(y_start + 45) 
             pdf.ln(5)
 
         pdf_out = pdf.output()
-        st.download_button("📥 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
+        st.download_button("📥 PDF 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
