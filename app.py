@@ -17,14 +17,19 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.0 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.2 최종)")
 
-# --- [기능] 이미지 처리 함수 ---
+# --- [기능] 이미지 처리 함수 (OSError 해결 버전) ---
 def image_to_base64(img):
     if img is None: return ""
+    # [핵심 수정] 투명도가 있는 이미지(RGBA)를 JPEG용 RGB로 변환하여 에러 방지
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    
     img = img.resize((150, 150))
     buffered = io.BytesIO()
-    img.save(buffered, format="JPEG", quality=70)
+    # 퀄리티를 85로 상향하여 저장
+    img.save(buffered, format="JPEG", quality=85)
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
@@ -94,7 +99,7 @@ if menu == "1. 성도 검색 및 수정":
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts)
             },
             use_container_width=True,
-            key="v3.0_editor"
+            key="v3.2_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -153,7 +158,7 @@ elif menu == "2. 새가족 등록":
 
 # 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
-    st.header("🖨️ PDF 주소록 생성 (가족 단위 정렬)")
+    st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
     inc_cols = st.multiselect("포함 정보 선택", 
                             options=["생년월일", "자녀", "전화번호", "주소", "비즈니스 주소"], 
@@ -174,7 +179,7 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
 
-        # 흑백 교회 아이콘 파일 경로 강제 지정
+        # 흑백 교회 아이콘 파일 경로
         church_icon_path = "church_icon.png"
 
         df['addr_key'] = df['주소'].str.strip()
@@ -186,34 +191,31 @@ elif menu == "3. PDF 주소록 만들기":
             y_start = pdf.get_y()
             if y_start > 230: pdf.add_page(); y_start = pdf.get_y()
             
-            # 가족 사진들을 나란히 배치
             x_pos = 10
             for _, member in group.iterrows():
                 if x_pos > 85: break 
                 
-                # 사진 데이터가 있으면 출력, 없으면 업로드된 church_icon.png 출력
+                # 사진 출력 로직
+                img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
                         img_data = base64.b64decode(member['사진'].split(",")[1])
-                        pdf.image(Image.open(io.BytesIO(img_data)), x=x_pos, y=y_start, w=30, h=30)
-                    except:
-                        if os.path.exists(church_icon_path):
-                            pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
-                        else:
-                            pdf.rect(x_pos, y_start, 30, 30)
-                else:
-                    if os.path.exists(church_icon_path):
-                        pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
-                    else:
-                        pdf.rect(x_pos, y_start, 30, 30)
+                        img_to_print = Image.open(io.BytesIO(img_data))
+                    except: pass
                 
-                # 사진 밑에 이름 표시
+                # [수정] 업로드된 church_icon.png를 우선 사용하도록 강제
+                if img_to_print:
+                    pdf.image(img_to_print, x=x_pos, y=y_start, w=30, h=30)
+                elif os.path.exists(church_icon_path):
+                    pdf.image(church_icon_path, x=x_pos, y=y_start, w=30, h=30)
+                else:
+                    pdf.rect(x_pos, y_start, 30, 30)
+                
                 pdf.set_xy(x_pos, y_start + 31)
                 pdf.set_font('Nanum' if font_ok else 'Arial', '', 8)
                 pdf.cell(30, 5, member['이름'], align='C')
                 x_pos += 32
 
-            # 정보 출력 (오른쪽 배치)
             names_text = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             pdf.set_xy(110, y_start) 
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 12)
@@ -229,4 +231,4 @@ elif menu == "3. PDF 주소록 만들기":
             pdf.ln(5)
 
         pdf_out = pdf.output()
-        st.download_button("📥 PDF 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
+        st.download_button("📥 다운로드", data=bytes(pdf_out), file_name=f"KKC_AddressBook_{datetime.now().strftime('%Y%m%d')}.pdf")
