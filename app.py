@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, date
 from streamlit_cropper import st_cropper
 from PIL import Image
 import io
@@ -17,9 +17,9 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v4.0 최종)")
+st.title("⛪ 킹스턴한인교회 교적부 (v4.1)")
 
-# --- [기능] 이미지 처리 함수 ---
+# --- [기능] 이미지 처리 및 날짜 변환 함수 ---
 def image_to_base64(img):
     if img is None: return ""
     if img.mode != "RGB": img = img.convert("RGB")
@@ -29,16 +29,17 @@ def image_to_base64(img):
     img_str = base64.b64encode(buffered.getvalue()).decode()
     return f"data:image/jpeg;base64,{img_str}"
 
-# [핵심] 생년월일 숫자를 0000-00-00 형식으로 자동 변환하는 함수
-def format_birth(date_str):
-    if not date_str or date_str in ["nan", "None", ""]: return ""
-    # 숫자만 추출
-    clean_date = "".join(filter(str.isdigit, str(date_str)))
-    if len(clean_date) == 8:
-        return f"{clean_date[:4]}-{clean_date[4:6]}-{clean_date[6:]}"
-    return date_str
+def safe_parse_date(val):
+    """숫자 8자리 혹은 다양한 형식을 날짜 객체로 변환"""
+    if not val or pd.isna(val) or str(val).lower() in ["none", "nan", ""]: return None
+    clean_val = "".join(filter(str.isdigit, str(val)))
+    try:
+        if len(clean_val) == 8: # 19701228 형식 대응
+            return datetime.strptime(clean_val, "%Y%m%d").date()
+        return pd.to_datetime(val).date()
+    except: return None
 
-# --- 구글 시트 연결 ---
+# --- 구글 시트 연결 및 데이터 로드 ---
 def get_sheet():
     try:
         if "gcp_service_account" in st.secrets:
@@ -50,7 +51,6 @@ def get_sheet():
         return client.open(SHEET_NAME).sheet1
     except Exception: return None
 
-# --- 데이터 불러오기 ---
 def load_data():
     sheet = get_sheet()
     if sheet:
@@ -61,10 +61,8 @@ def load_data():
             df = pd.DataFrame(data).astype(str)
             for c in cols:
                 if c not in df.columns: df[c] = ""
-            
-            # 불러올 때 형식을 정리해서 보여줌
-            df['생년월일'] = df['생년월일'].apply(format_birth)
-            
+            # 날짜 형식으로 변환하여 표에 표시
+            df['생년월일'] = df['생년월일'].apply(safe_parse_date)
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
@@ -74,7 +72,10 @@ def load_data():
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
-        save_df = df.copy().fillna("")
+        save_df = df.copy()
+        # 구글 시트 저장 시에는 YYYY-MM-DD 문자열로 변환
+        save_df['생년월일'] = save_df['생년월일'].apply(lambda x: str(x) if x else "")
+        save_df = save_df.fillna("")
         sheet.clear()
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
@@ -88,8 +89,7 @@ if menu == "1. 성도 검색 및 수정":
     df = load_data()
     if not df.empty:
         col1, col2 = st.columns([2, 1]) 
-        with col1:
-            search = st.text_input("이름/전화번호 검색")
+        with col1: search = st.text_input("이름/전화번호 검색")
         with col2:
             status_opts = ["출석 중", "새가족", "장기결석", "한국 체류", "타지역 체류", "유학 종료", "전출"]
             selected_status = st.multiselect("상태별 필터", options=status_opts)
@@ -98,21 +98,25 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # [수정] DateColumn 대신 일반 TextColumn을 사용하여 6자리 연도 에러 방지
+        # [수정] DateColumn의 입력 범위를 연도 4자리에 최적화
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.TextColumn("생년월일", help="숫자 8자리를 치면 자동 변환됩니다 (예: 19701228)")
+                "생년월일": st.column_config.DateColumn(
+                    "생년월일",
+                    format="YYYY-MM-DD",
+                    min_value=date(1900, 1, 1),
+                    max_value=date(2100, 12, 31),
+                    step=1
+                )
             },
             use_container_width=True,
-            key="v4.0_editor"
+            key="v4.1_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
-            # 저장 전 다시 한번 형식 확인
-            edited_df['생년월일'] = edited_df['생년월일'].apply(format_birth)
             df.update(edited_df)
             save_to_google(df)
             st.success("저장되었습니다.")
@@ -120,9 +124,5 @@ if menu == "1. 성도 검색 및 수정":
 
         st.divider()
         if not results.empty:
-            sel_person = st.selectbox(
-                "🎯 대상 선택:", 
-                results.index, 
-                format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '직분']})"
-            )
-            # (이후 사진 및 심방기록 로직 동일)
+            sel_person = st.selectbox("🎯 대상 선택:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '직분']})")
+            # 심방기록 및 사진 업로드 로직 동일 유지
