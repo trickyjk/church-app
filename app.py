@@ -17,12 +17,11 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v4.1)")
+st.title("⛪ 킹스턴한인교회 교적부 (v4.2)")
 
-# --- [기능] 이미지 처리 및 날짜 변환 함수 ---
+# --- [기능] 이미지 및 데이터 포맷 함수 ---
 def image_to_base64(img):
     if img is None: return ""
-    # PNG 등 투명도가 있는 이미지 모드를 JPEG용 RGB로 변환
     if img.mode != "RGB": img = img.convert("RGB")
     img = img.resize((150, 150))
     buffered = io.BytesIO()
@@ -31,14 +30,24 @@ def image_to_base64(img):
     return f"data:image/jpeg;base64,{img_str}"
 
 def safe_parse_date(val):
-    """숫자 8자리 혹은 다양한 형식을 날짜 객체로 변환"""
+    """숫자 8자리를 날짜 객체로 변환"""
     if not val or pd.isna(val) or str(val).lower() in ["none", "nan", ""]: return None
     clean_val = "".join(filter(str.isdigit, str(val)))
     try:
-        if len(clean_val) == 8: # 19701228 형식 대응
+        if len(clean_val) == 8:
             return datetime.strptime(clean_val, "%Y%m%d").date()
         return pd.to_datetime(val).date()
     except: return None
+
+def format_phone(val):
+    """숫자만 추출하여 000-000-0000 형식으로 변환"""
+    if not val or pd.isna(val) or str(val).lower() in ["none", "nan", ""]: return ""
+    nums = "".join(filter(str.isdigit, str(val)))
+    if len(nums) == 10:
+        return f"{nums[:3]}-{nums[3:6]}-{nums[6:]}"
+    elif len(nums) == 11:
+        return f"{nums[:3]}-{nums[3:7]}-{nums[7:]}"
+    return val
 
 # --- 구글 시트 연결 ---
 def get_sheet():
@@ -63,12 +72,15 @@ def load_data():
             df = pd.DataFrame(data).astype(str)
             for c in cols:
                 if c not in df.columns: df[c] = ""
-            # 날짜 형식으로 변환하여 표에 표시
+            
+            # 포맷팅 적용
             df['생년월일'] = df['생년월일'].apply(safe_parse_date)
+            df['전화번호'] = df['전화번호'].apply(format_phone)
+            
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
-        except: return pd.DataFrame(columns=["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"])
+        except: return pd.DataFrame(columns=cols)
     return pd.DataFrame()
 
 def save_to_google(df):
@@ -76,12 +88,12 @@ def save_to_google(df):
     if sheet:
         save_df = df.copy()
         save_df['생년월일'] = save_df['생년월일'].apply(lambda x: str(x) if x else "")
+        save_df['전화번호'] = save_df['전화번호'].apply(format_phone)
         save_df = save_df.fillna("")
         sheet.clear()
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
 
-# 직분 리스트 정의
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
@@ -100,24 +112,21 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
-        # 표 설정: 생년월일 연도 4자리 입력 유도
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.DateColumn(
-                    "생년월일",
-                    format="YYYY-MM-DD",
-                    min_value=date(1900, 1, 1),
-                    max_value=date(2100, 12, 31)
-                )
+                "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1900, 1, 1), max_value=date(2100, 12, 31)),
+                "전화번호": st.column_config.TextColumn("전화번호", help="숫자만 입력하면 자동으로 하이픈이 추가됩니다.")
             },
             use_container_width=True,
-            key="v4.1_editor"
+            key="v4.2_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
+            # 저장 직전 전화번호 다시 포맷팅
+            edited_df['전화번호'] = edited_df['전화번호'].apply(format_phone)
             df.update(edited_df)
             save_to_google(df)
             st.success("저장되었습니다.")
@@ -125,7 +134,6 @@ if menu == "1. 성도 검색 및 수정":
 
         st.divider()
         if not results.empty:
-            # "대상 선택"으로 명칭 변경 및 이름(직분) 표시
             sel_person = st.selectbox("🎯 대상 선택:", results.index, format_func=lambda x: f"{results.loc[x, '이름']} ({results.loc[x, '직분']})")
             
             t1, t2 = st.tabs(["✍️ 심방 기록", "📷 사진 변경"])
@@ -165,16 +173,17 @@ elif menu == "2. 새가족 등록":
             role = st.selectbox("직분", ROLE_OPTIONS)
             status = st.selectbox("상태", ["새가족", "출석 중"])
         with c2:
-            phone = st.text_input("전화번호")
+            phone = st.text_input("전화번호 (숫자만 입력 가능)")
             birth = st.date_input("생년월일", value=date(1980, 1, 1))
             addr = st.text_input("주소")
         if st.form_submit_button("등록"):
             df_curr = load_data()
-            new_row = pd.DataFrame([[ "", name, role, status, phone, str(birth), addr, "", "", ""]], columns=df_curr.columns)
+            formatted_p = format_phone(phone) # 등록 시 포맷팅
+            new_row = pd.DataFrame([[ "", name, role, status, formatted_p, str(birth), addr, "", "", ""]], columns=df_curr.columns)
             save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
-            st.success("등록 완료")
+            st.success(f"'{name}' 성도님 등록 완료 (번호: {formatted_p})")
 
-# 3. PDF 주소록 만들기
+# 3. PDF 주소록 만들기 (동일 유지)
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
@@ -195,7 +204,6 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
         pdf.ln(5)
 
-        # 흑백 교회 아이콘 파일 경로
         church_icon_path = "church_icon.png"
         df['addr_key'] = df['주소'].str.strip()
         grouped = df.groupby('addr_key', sort=False)
@@ -206,13 +214,12 @@ elif menu == "3. PDF 주소록 만들기":
             if y_start > 230: pdf.add_page(); y_start = pdf.get_y()
             
             x_pos = 10
-            # 가족 사진 나란히 배치
             for _, member in group.iterrows():
                 if x_pos > 85: break 
                 img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
-                        img_data = base64.b64decode(member['사진'].split(",")[1])
+                        img_data = base64.decode(member['사진'].split(",")[1])
                         img_to_print = Image.open(io.BytesIO(img_data))
                     except: pass
                 
@@ -229,7 +236,6 @@ elif menu == "3. PDF 주소록 만들기":
                 pdf.cell(30, 5, member['이름'], align='C')
                 x_pos += 32
 
-            # 정보 출력
             names_text = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             pdf.set_xy(110, y_start) 
             pdf.set_font('Nanum' if font_ok else 'Arial', '', 12)
