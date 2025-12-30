@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, date
 from streamlit_cropper import st_cropper
 from PIL import Image
 import io
@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v3.8)")
+st.title("⛪ 킹스턴한인교회 교적부 (v3.9 최종)")
 
 # --- [기능] 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -54,23 +54,23 @@ def load_data():
             for c in cols:
                 if c not in df.columns: df[c] = ""
             
-            # 생년월일 컬럼을 날짜 형식으로 변환
+            # 생년월일 데이터를 안전하게 날짜 형식으로 변환
             df['생년월일'] = pd.to_datetime(df['생년월일'], errors='coerce').dt.date
             
             df = df[cols]
             df.index = range(1, len(df) + 1)
             return df
-        except: return pd.DataFrame(columns=["사진", "이름", "직분", "상태", "전화번호", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록"])
+        except: return pd.DataFrame(columns=cols)
     return pd.DataFrame()
 
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
         save_df = df.copy()
+        # 시트 저장 시 문자열로 변환
         for col in save_df.columns:
             if 'date' in str(save_df[col].dtype) or save_df[col].dtype == 'object':
                 save_df[col] = save_df[col].astype(str).replace("NaT", "").replace("None", "")
-        
         sheet.clear()
         data_to_upload = [save_df.columns.values.tolist()] + save_df.values.tolist()
         sheet.update(data_to_upload)
@@ -94,16 +94,22 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
+        # [수정] 생년월일 입력 시 연도 범위를 제한하여 4자리 입력을 유도
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD")
+                "생년월일": st.column_config.DateColumn(
+                    "생년월일",
+                    format="YYYY-MM-DD",
+                    min_value=date(1900, 1, 1),
+                    max_value=date(2100, 12, 31)
+                )
             },
             use_container_width=True,
-            key="v3.8_editor"
+            key="v3.9_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
             df.update(edited_df)
@@ -113,7 +119,6 @@ if menu == "1. 성도 검색 및 수정":
 
         st.divider()
         if not results.empty:
-            # [수정] "대상 선택"으로 명칭 변경 및 이름(직분) 형식으로 표시
             sel_person = st.selectbox(
                 "🎯 대상 선택:", 
                 results.index, 
@@ -147,7 +152,7 @@ if menu == "1. 성도 검색 및 수정":
                         st.success("변경 완료")
                         st.rerun()
 
-# 3. PDF 주소록 만들기 (동일 유지)
+# 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성 (가족 단위)")
     df = load_data()
@@ -183,7 +188,7 @@ elif menu == "3. PDF 주소록 만들기":
                 img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
-                        img_data = base64.decode(member['사진'].split(",")[1])
+                        img_data = base64.b64decode(member['사진'].split(",")[1])
                         img_to_print = Image.open(io.BytesIO(img_data))
                     except: pass
                 
@@ -231,7 +236,7 @@ elif menu == "2. 새가족 등록":
             status = st.selectbox("상태", ["새가족", "출석 중"])
         with c2:
             phone = st.text_input("전화번호")
-            birth = st.date_input("생년월일", value=datetime(1980, 1, 1))
+            birth = st.date_input("생년월일", value=date(1980, 1, 1))
             addr = st.text_input("주소")
         if st.form_submit_button("등록"):
             df_curr = load_data()
