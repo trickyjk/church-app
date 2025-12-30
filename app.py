@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v4.2)")
+st.title("⛪ 킹스턴한인교회 교적부 (v4.3)")
 
 # --- [기능] 이미지 및 데이터 포맷 함수 ---
 def image_to_base64(img):
@@ -73,7 +73,6 @@ def load_data():
             for c in cols:
                 if c not in df.columns: df[c] = ""
             
-            # 포맷팅 적용
             df['생년월일'] = df['생년월일'].apply(safe_parse_date)
             df['전화번호'] = df['전화번호'].apply(format_phone)
             
@@ -112,20 +111,25 @@ if menu == "1. 성도 검색 및 수정":
         if selected_status: results = results[results['상태'].isin(selected_status)]
         if search: results = results[results['이름'].str.contains(search) | results['전화번호'].str.contains(search)]
 
+        # [수정] 생년월일 범위를 1850년부터로 대폭 확대
         edited_df = st.data_editor(
             results,
             column_config={
                 "사진": st.column_config.ImageColumn("사진", width="small"),
                 "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
                 "상태": st.column_config.SelectboxColumn("상태", options=status_opts),
-                "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1900, 1, 1), max_value=date(2100, 12, 31)),
-                "전화번호": st.column_config.TextColumn("전화번호", help="숫자만 입력하면 자동으로 하이픈이 추가됩니다.")
+                "생년월일": st.column_config.DateColumn(
+                    "생년월일", 
+                    format="YYYY-MM-DD", 
+                    min_value=date(1850, 1, 1), # 하한선 확대
+                    max_value=date(2100, 12, 31)
+                ),
+                "전화번호": st.column_config.TextColumn("전화번호")
             },
             use_container_width=True,
-            key="v4.2_editor"
+            key="v4.3_editor"
         )
         if st.button("💾 정보 저장", type="primary"):
-            # 저장 직전 전화번호 다시 포맷팅
             edited_df['전화번호'] = edited_df['전화번호'].apply(format_phone)
             df.update(edited_df)
             save_to_google(df)
@@ -152,9 +156,6 @@ if menu == "1. 성도 검색 및 수정":
                 up_file = st.file_uploader("사진 업로드")
                 if up_file:
                     img = Image.open(up_file)
-                    if st.button("🔄 90도 회전"):
-                        if "rot" not in st.session_state: st.session_state.rot = 0
-                        st.session_state.rot = (st.session_state.rot + 90) % 360
                     img = img.rotate(-st.session_state.get("rot", 0), expand=True)
                     cropped = st_cropper(img, aspect_ratio=(1,1))
                     if st.button("사진 저장"):
@@ -173,15 +174,16 @@ elif menu == "2. 새가족 등록":
             role = st.selectbox("직분", ROLE_OPTIONS)
             status = st.selectbox("상태", ["새가족", "출석 중"])
         with c2:
-            phone = st.text_input("전화번호 (숫자만 입력 가능)")
-            birth = st.date_input("생년월일", value=date(1980, 1, 1))
+            phone = st.text_input("전화번호")
+            # [수정] 새가족 등록창에서도 1850년부터 선택 가능하게 변경
+            birth = st.date_input("생년월일", value=date(1970, 1, 1), min_value=date(1850, 1, 1))
             addr = st.text_input("주소")
         if st.form_submit_button("등록"):
             df_curr = load_data()
-            formatted_p = format_phone(phone) # 등록 시 포맷팅
+            formatted_p = format_phone(phone)
             new_row = pd.DataFrame([[ "", name, role, status, formatted_p, str(birth), addr, "", "", ""]], columns=df_curr.columns)
             save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
-            st.success(f"'{name}' 성도님 등록 완료 (번호: {formatted_p})")
+            st.success(f"등록 완료")
 
 # 3. PDF 주소록 만들기 (동일 유지)
 elif menu == "3. PDF 주소록 만들기":
@@ -219,7 +221,7 @@ elif menu == "3. PDF 주소록 만들기":
                 img_to_print = None
                 if member['사진'] and "base64," in member['사진']:
                     try:
-                        img_data = base64.decode(member['사진'].split(",")[1])
+                        img_data = base64.b64decode(member['사진'].split(",")[1])
                         img_to_print = Image.open(io.BytesIO(img_data))
                     except: pass
                 
