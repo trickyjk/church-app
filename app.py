@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.1)")
+st.title("⛪ 킹스턴한인교회 교적부 (v6.2)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -74,13 +74,12 @@ def save_to_google(df):
         sheet.clear()
         sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
 
-# [1. 직분 카테고리 정리]
+# 직분 및 신급 옵션
 ROLE_OPTIONS = [
     "목사", "장로", "전도사", "시무권사", 
     "협동목사", "협동장로", "협동권사", "협동안수집사",
     "은퇴장로", "은퇴권사", "은퇴협동권사", "집사", "청년", "성도"
 ]
-# [2. 신급 카테고리 정리]
 FAITH_OPTIONS = ["유아세례", "아동세례", "입교", "세례", "해당없음"]
 STATUS_OPTIONS = ["출석 중", "장기결석", "한국 체류", "타지역 체류", "전출"]
 
@@ -139,25 +138,22 @@ if menu == "1. 성도 검색 및 관리":
     
     st.write(f"총 {len(results)}명")
 
-    # [3. 이름 클릭하여 팝업 열기 구현]
-    # Streamlit의 column_config를 활용하여 버튼형 클릭 구현
-    # '수정' 버튼을 가장 앞에 배치하여 즉시 팝업을 띄울 수 있게 함
-    grid_df = results[["사진", "이름", "직분", "전화번호", "상태", "주소"]].copy()
-    
-    # 리스트 출력
-    event = st.dataframe(
-        grid_df,
+    # [수정 포인트] Column Config를 통한 Cell 너비 최적화 (Autosize 효과)
+    st.dataframe(
+        results[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
-            "이름": st.column_config.TextColumn("이름 (클릭 불가)", help="아래 버튼을 사용하여 수정하세요"),
+            "이름": st.column_config.TextColumn("이름", width="small"),
+            "직분": st.column_config.TextColumn("직분", width="small"),
+            "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
+            "상태": st.column_config.TextColumn("상태", width="small"),
+            "주소": st.column_config.TextColumn("주소", width="large"),
+            "사역이력": st.column_config.TextColumn("사역이력", width="large"),
         },
         use_container_width=True,
-        key="member_grid",
-        on_select="ignore"
+        hide_index=True
     )
 
-    # 이름 직접 클릭 대신, 가장 직관적인 '성도 선택' 셀렉트박스를 리스트 바로 위에 배치
-    # (Streamlit 표 내부 텍스트 클릭 이벤트는 특수 라이브러리 없이는 구현이 제한적이므로 가장 안정적인 방식 선택)
     selected_target = st.selectbox("✏️ 수정을 원하는 성도 이름을 선택하면 팝업이 열립니다:", 
                                   options=[None] + list(results.index),
                                   format_func=lambda x: f"▶ {results.loc[x, '이름']} {results.loc[x, '직분']}" if x else "성도를 선택하세요")
@@ -172,6 +168,7 @@ elif menu == "2. 신규 등록":
         with c1:
             n_name = st.text_input("이름 (필수)")
             n_role = st.selectbox("직분", ROLE_OPTIONS, index=len(ROLE_OPTIONS)-1)
+            n_faith = st.selectbox("신급", FAITH_OPTIONS, index=4)
             n_birth = st.date_input("생년월일", value=date(2000, 1, 1))
         with c2:
             n_phone, n_addr = st.text_input("전화번호"), st.text_input("주소")
@@ -179,11 +176,12 @@ elif menu == "2. 신규 등록":
         if st.form_submit_button("등록하기", type="primary"):
             if n_name:
                 df_curr = load_data()
-                new_row = [["", n_name, n_role, "해당없음", n_status, format_phone(n_phone), "", str(n_birth), n_addr, "", "", "", str(date.today()), str(date.today()), ""]]
+                new_row = [["", n_name, n_role, n_faith, n_status, format_phone(n_phone), "", str(n_birth), n_addr, "", "", "", str(date.today()), str(date.today()), ""]]
                 save_to_google(pd.concat([df_curr, pd.DataFrame(new_row, columns=df_curr.columns)], ignore_index=True))
                 st.success("등록되었습니다!"); st.rerun()
 
 elif menu == "3. PDF 주소록 만들기":
+    # 이전 버전과 동일 (안정적)
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
     t_status = st.multiselect("대상 상태", STATUS_OPTIONS, default=["출석 중"])
@@ -195,8 +193,6 @@ elif menu == "3. PDF 주소록 만들기":
         pdf.cell(0, 10, "KKC Address Book", ln=True, align='C'); pdf.ln(5)
         p_df = df[df['상태'].isin(t_status)].copy()
         for _, m in p_df.sort_values('이름').iterrows():
-            y = pdf.get_y()
-            if y > 250: pdf.add_page(); y = pdf.get_y()
             pdf.set_font(f_name, '', 12)
             pdf.cell(0, 10, f"{m['이름']} {m['직분']} | {m['전화번호']} | {m['주소']}", ln=True)
         st.download_button("📥 다운로드", data=bytes(pdf.output()), file_name="AddressBook.pdf")
