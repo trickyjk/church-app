@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.7)")
+st.title("⛪ 킹스턴한인교회 교적부 (v6.8)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -137,18 +137,23 @@ if menu == "1. 성도 관리":
     
     st.divider()
     
-    # 3. 리스트 컬럼 순서 및 수정 기능 복구
     list_cols = ["사진", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "비즈니스 주소", "상태"]
     
-    # [수정 포인트] 리스트에서 바로 수정 가능한 data_editor
-    st.write("📊 리스트에서 정보를 바로 수정할 수 있습니다 (수정 후 아래 저장 버튼 클릭)")
+    st.write("📊 리스트 즉시 수정 (수정 후 아래 저장 버튼 클릭)")
+    # [수정] DateColumn의 format과 범위를 명시적으로 지정하여 입력 오류 방지
     edited_df = st.data_editor(
         df[list_cols],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
             "이름": st.column_config.TextColumn("이름", width="small"),
             "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS, width="small"),
-            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1900,1,1), width="medium"),
+            "생년월일": st.column_config.DateColumn(
+                "생년월일", 
+                format="YYYY-MM-DD", 
+                min_value=date(1900,1,1), 
+                max_value=date(2100,12,31),
+                width="medium"
+            ),
             "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
             "이메일": st.column_config.TextColumn("이메일", width="medium"),
             "주소": st.column_config.TextColumn("주소", width="large"),
@@ -163,7 +168,7 @@ if menu == "1. 성도 관리":
     if st.button("💾 리스트 수정사항 전체 저장", type="primary"):
         df.update(edited_df)
         save_to_google(df)
-        st.success("리스트의 모든 수정사항이 구글 시트에 저장되었습니다.")
+        st.success("저장되었습니다.")
         st.rerun()
 
 elif menu == "2. 신규 등록":
