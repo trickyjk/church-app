@@ -9,33 +9,23 @@ import io
 import base64
 from fpdf import FPDF
 import os
-# [추가] AgGrid 라이브러리
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
-# --- 설정 및 데이터 연결 ---
+# --- 1. 설정 및 데이터 연결 ---
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v7.6 - AgGrid)")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v7.8")
 
-# --- [기능] 유틸리티 함수 ---
+# --- 2. 유틸리티 함수 ---
 def image_to_base64(img):
     if img is None: return ""
     if img.mode != "RGB": img = img.convert("RGB")
     img = img.resize((150, 150))
     buffered = io.BytesIO()
-    img.save(buffered, format="JPEG", quality=85, subsampling=0)
+    img.save(buffered, format="JPEG", quality=85)
     return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
-
-def safe_parse_date(val):
-    if not val or pd.isna(val) or str(val).lower() in ["none", "nan", ""]: return None
-    clean_val = "".join(filter(str.isdigit, str(val)))
-    try:
-        if len(clean_val) == 8: return datetime.strptime(clean_val, "%Y%m%d").date()
-        return pd.to_datetime(val).date()
-    except: return None
 
 def format_phone(val):
     if not val or pd.isna(val) or str(val).lower() in ["none", "nan", ""]: return ""
@@ -52,21 +42,17 @@ def get_sheet():
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, SCOPE)
         return gspread.authorize(creds).open(SHEET_NAME).sheet1
-    except: return None
+    except Exception as e:
+        st.error(f"구글 시트 연결 오류: {e}")
+        return None
 
 def load_data():
     sheet = get_sheet()
     if not sheet: return pd.DataFrame()
     data = sheet.get_all_records()
-    cols = ["사진", "이름", "직분", "신급", "상태", "전화번호", "이메일", "생년월일", "주소", "비즈니스 주소", "자녀", "심방기록", "등록신청일", "등록일", "사역이력"]
-    df = pd.DataFrame(data).astype(str)
-    for c in cols:
-        if c not in df.columns: df[c] = ""
-    df['생년월일'] = df['생년월일'].apply(safe_parse_date)
-    df['등록신청일'] = df['등록신청일'].apply(safe_parse_date)
-    df['등록일'] = df['등록일'].apply(safe_parse_date)
-    df['전화번호'] = df['전화번호'].apply(format_phone)
-    # AgGrid에서 행을 찾기 위해 실제 시트 행 번호를 'id'로 저장
+    df = pd.DataFrame(data)
+    # [생년월일 유실 방지 핵심] 모든 컬럼을 문자열로 읽고 결측치 제거
+    df = df.astype(str).replace(['nan', 'None', 'NaT', 'NaN', 'null'], '')
     df['id'] = range(1, len(df) + 1)
     return df
 
@@ -75,169 +61,177 @@ def save_to_google(df):
     if sheet:
         save_df = df.copy()
         if 'id' in save_df.columns: save_df = save_df.drop(columns=['id'])
-        for d in ['생년월일', '등록신청일', '등록일']:
-            save_df[d] = save_df[d].apply(lambda x: str(x) if x else "")
         save_df = save_df.fillna("")
         sheet.clear()
         sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
 
+# 옵션 리스트
 ROLE_OPTIONS = ["목사", "장로", "전도사", "시무권사", "협동목사", "협동장로", "협동권사", "협동안수집사", "은퇴장로", "은퇴권사", "은퇴협동권사", "집사", "청년", "성도"]
 FAITH_OPTIONS = ["유아세례", "아동세례", "입교", "세례", "해당없음"]
 STATUS_OPTIONS = ["전체", "출석 중", "장기결석", "한국 체류", "타지역 체류", "전출"]
 
-# --- [상세 정보 수정 팝업 함수] ---
+# --- 3. 상세 정보 수정 팝업 (Dialog) ---
 @st.dialog("성도 상세 정보 및 수정")
-def edit_member_dialog(member_id, df):
-    # AgGrid에서 선택된 id 기반으로 데이터 추출
-    m_info = df[df['id'] == member_id].iloc[0]
+def edit_member_dialog(member_id, full_df):
+    m_info = full_df[full_df['id'] == member_id].iloc[0]
     
-    tab1, tab2 = st.tabs(["📄 정보 수정", "📷 사진 변경"])
+    tab1, tab2 = st.tabs(["📄 정보 및 심방기록", "📷 사진 변경"])
+    
     with tab1:
         with st.form("edit_form"):
             c1, c2 = st.columns(2)
             with c1:
-                u_name = st.text_input("이름", value=m_info['이름'])
-                u_role = st.selectbox("직분", ROLE_OPTIONS, index=ROLE_OPTIONS.index(m_info['직분']) if m_info['직분'] in ROLE_OPTIONS else len(ROLE_OPTIONS)-1)
+                u_name = st.text_input("이름", value=str(m_info['이름']))
+                u_role = st.selectbox("직분", ROLE_OPTIONS, index=ROLE_OPTIONS.index(m_info['직분']) if m_info['직분'] in ROLE_OPTIONS else 13)
                 u_faith = st.selectbox("신급", FAITH_OPTIONS, index=FAITH_OPTIONS.index(m_info['신급']) if m_info['신급'] in FAITH_OPTIONS else 4)
-                u_birth = st.date_input("생년월일", value=m_info['생년월일'] if m_info['생년월일'] else date(2000,1,1), min_value=date(1900,1,1), max_value=date(2100,12,31))
-                u_apply = st.date_input("등록 신청일", value=m_info['등록신청일'] if m_info['등록신청일'] else date.today())
-                u_reg = st.date_input("등록일", value=m_info['등록일'] if m_info['등록일'] else date.today())
+                u_birth = st.text_input("생년월일", value=str(m_info['생년월일']))
             with c2:
                 u_status = st.selectbox("상태", STATUS_OPTIONS[1:], index=STATUS_OPTIONS[1:].index(m_info['상태']) if m_info['상태'] in STATUS_OPTIONS[1:] else 0)
-                u_phone = st.text_input("전화번호", value=m_info['전화번호'])
-                u_email = st.text_input("이메일", value=m_info['이메일'])
-                u_addr = st.text_input("주소", value=m_info['주소'])
-            u_history = st.text_area("사역 이력", value=m_info['사역이력'])
-            st.write("**목양 이력**")
-            st.text_area("기존 기록", value=m_info['심방기록'], height=100, disabled=True)
-            new_note = st.text_area("목양 노트 (새로운 내용 입력)")
+                u_phone = st.text_input("전화번호", value=str(m_info['전화번호']))
+                u_email = st.text_input("이메일", value=str(m_info['이메일']))
+                u_addr = st.text_input("주소", value=str(m_info['주소']))
             
-            if st.form_submit_button("💾 저장하기", type="primary"):
-                # 실제 데이터프레임의 인덱스를 찾아 업데이트
-                idx = df[df['id'] == member_id].index[0]
-                df.at[idx, '이름'], df.at[idx, '직분'], df.at[idx, '신급'] = u_name, u_role, u_faith
-                df.at[idx, '생년월일'], df.at[idx, '상태'], df.at[idx, '전화번호'] = u_birth, u_status, format_phone(u_phone)
-                df.at[idx, '이메일'], df.at[idx, '주소'], df.at[idx, '사역이력'] = u_email, u_addr, u_history
-                df.at[idx, '등록신청일'], df.at[idx, '등록일'] = u_apply, u_reg
+            u_history = st.text_area("사역 이력", value=str(m_info['사역이력']))
+            st.write("---")
+            st.write("**📝 목양 기록 (심방 등)**")
+            st.info(m_info['심방기록'] if m_info['심방기록'] else "기록된 심방 내용이 없습니다.")
+            new_note = st.text_area("새로운 심방/특이사항 기록 추가")
+            
+            if st.form_submit_button("💾 데이터 저장 (구글 시트 동기화)"):
+                idx = full_df[full_df['id'] == member_id].index[0]
+                full_df.at[idx, '이름'] = u_name
+                full_df.at[idx, '직분'] = u_role
+                full_df.at[idx, '신급'] = u_faith
+                full_df.at[idx, '생년월일'] = u_birth
+                full_df.at[idx, '상태'] = u_status
+                full_df.at[idx, '전화번호'] = format_phone(u_phone)
+                full_df.at[idx, '이메일'] = u_email
+                full_df.at[idx, '주소'] = u_addr
+                full_df.at[idx, '사역이력'] = u_history
                 
                 if new_note.strip():
-                    log_entry = f"[{date.today().strftime('%Y-%m-%d')}] {new_note.strip()}"
-                    current_log = str(m_info['심방기록'])
-                    df.at[idx, '심방기록'] = f"{current_log}\n{log_entry}" if current_log and current_log.lower() != "nan" else log_entry
+                    log_entry = f"[{date.today()}] {new_note.strip()}"
+                    old_log = str(m_info['심방기록'])
+                    full_df.at[idx, '심방기록'] = f"{old_log}\n{log_entry}" if old_log and old_log != "" else log_entry
                 
-                save_to_google(df)
-                st.success("저장되었습니다.")
-                st.rerun()
+                save_to_google(full_df)
+                st.success("성공적으로 저장되었습니다."); st.rerun()
 
-# --- 메인 메뉴 ---
-menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록", "3. PDF 주소록 만들기"])
+    with tab2:
+        if m_info['사진']:
+            st.image(m_info['사진'], width=150, caption="현재 사진")
+        img_file = st.file_uploader("새 사진 업로드", type=['jpg', 'png', 'jpeg'])
+        if img_file:
+            img = Image.open(img_file)
+            cropped_img = st_cropper(img, aspect_ratio=(1, 1))
+            if st.button("📷 사진 확정 및 저장"):
+                b64_img = image_to_base64(cropped_img)
+                idx = full_df[full_df['id'] == member_id].index[0]
+                full_df.at[idx, '사진'] = b64_img
+                save_to_google(full_df)
+                st.success("사진이 업데이트되었습니다."); st.rerun()
 
-if menu == "1. 성도 관리":
+# --- 4. 메인 화면 ---
+st.title("⛪ 킹스턴한인교회 통합 교적부 시스템")
+menu = st.sidebar.radio("메뉴 이동", ["성도 관리 (조회/수정)", "신규 성도 등록", "주소록 PDF 생성"])
+
+if menu == "성도 관리 (조회/수정)":
     df = load_data()
-    st.subheader("🔍 성도 검색 및 수정 (AgGrid)")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        search_target = st.selectbox("성함 검색:", [None] + sorted(df['이름'].unique()))
-    with c2:
-        status_filter = st.selectbox("교적 상태:", STATUS_OPTIONS)
+    if not df.empty:
+        c1, c2, c3 = st.columns([2, 1, 1])
+        with c1: search = st.text_input("🔍 성함으로 찾기")
+        with c2: f_status = st.selectbox("📍 상태 필터", STATUS_OPTIONS)
+        with c3: f_role = st.selectbox("🎓 직분 필터", ["전체"] + ROLE_OPTIONS)
+        
+        filtered = df.copy()
+        if search: filtered = filtered[filtered['이름'].str.contains(search)]
+        if f_status != "전체": filtered = filtered[filtered['상태'] == f_status]
+        if f_role != "전체": filtered = filtered[filtered['직분'] == f_role]
 
-    filtered_df = df.copy()
-    if search_target: filtered_df = filtered_df[filtered_df['이름'] == search_target]
-    if status_filter != "전체": filtered_df = filtered_df[filtered_df['상태'] == status_filter]
+        st.markdown("---")
+        # AgGrid 표시용 데이터 (사진 등 무거운 데이터 제외)
+        display_df = filtered[["이름", "직분", "신급", "생년월일", "전화번호", "주소", "상태", "id"]]
+        
+        gb = GridOptionsBuilder.from_dataframe(display_df)
+        gb.configure_selection('single', use_checkbox=True)
+        gb.configure_column("id", hide=True)
+        gb.configure_column("이름", pinned='left', width=100)
+        gb.configure_default_column(resizable=True, filterable=True, sortable=True)
+        grid_opts = gb.build()
 
-    st.divider()
+        st.caption("💡 명단 왼쪽의 체크박스를 선택하면 상세 정보 및 심방기록을 수정할 수 있는 팝업창이 나타납니다.")
+        
+        responses = AgGrid(
+            display_df, 
+            gridOptions=grid_opts, 
+            theme='balham', 
+            height=500, 
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            fit_columns_on_grid_load=True
+        )
 
-    # --- [AgGrid 설정] ---
-    gb = GridOptionsBuilder.from_dataframe(filtered_df[["이름", "직분", "생년월일", "전화번호", "주소", "상태", "id"]])
-    # 체크박스 설정
-    gb.configure_selection('single', use_checkbox=True, groupSelectsChildren=False)
-    gb.configure_column("id", hide=True) # ID 컬럼은 숨김
-    gb.configure_column("이름", pinned='left') # 이름 컬럼 고정
-    gridOptions = gb.build()
+        # 행 선택 감지 및 팝업 호출
+        selected = responses.get('selected_rows', [])
+        if isinstance(selected, pd.DataFrame):
+            if not selected.empty: edit_member_dialog(int(selected.iloc[0]['id']), df)
+        elif len(selected) > 0:
+            edit_member_dialog(int(selected[0]['id']), df)
+    else:
+        st.error("데이터를 가져오지 못했습니다. Google Sheets 연결 설정을 확인해 주세요.")
 
-    st.write(f"📊 검색 결과: {len(filtered_df)}명 (왼쪽 체크박스를 선택하면 상세 팝업이 열립니다)")
-    
-    # AgGrid 실행
-    grid_response = AgGrid(
-        filtered_df,
-        gridOptions=gridOptions,
-        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
-        fit_columns_on_grid_load=True,
-        theme='balham', # 깔끔한 테마
-        height=400,
-        reload_data=True
-    )
-
-    # 행 선택 시 자동 팝업
-    selected_rows = grid_response['selected_rows']
-    if selected_rows is not None and len(selected_rows) > 0:
-        # 선택된 행의 ID 추출
-        member_id = selected_rows[0]['id']
-        edit_member_dialog(member_id, df)
-
-elif menu == "2. 신규 등록":
+elif menu == "신규 성도 등록":
     st.header("📝 신규 성도 등록")
-    with st.form("new_reg"):
-        c1, c2 = st.columns(2)
-        with c1:
+    with st.form("new_entry_form"):
+        col1, col2 = st.columns(2)
+        with col1:
             n_name = st.text_input("이름 (필수)")
-            n_role = st.selectbox("직분", ROLE_OPTIONS, index=len(ROLE_OPTIONS)-1)
+            n_role = st.selectbox("직분", ROLE_OPTIONS, index=13)
             n_faith = st.selectbox("신급", FAITH_OPTIONS, index=4)
-            n_birth = st.date_input("생년월일", value=date(2000, 1, 1), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
-            n_apply = st.date_input("등록 신청일", value=date.today())
-            n_reg = st.date_input("등록일", value=date.today())
-        with c2:
-            n_phone, n_email, n_addr = st.text_input("전화번호"), st.text_input("이메일"), st.text_input("주소")
-            n_history, n_note = st.text_input("사역 이력"), st.text_area("목양 노트", height=150)
-        if st.form_submit_button("등록하기", type="primary"):
+            n_birth = st.text_input("생년월일 (YYYY-MM-DD)")
+        with col2:
+            n_phone = st.text_input("전화번호")
+            n_email = st.text_input("이메일")
+            n_addr = st.text_input("주소")
+        n_history = st.text_area("사역 이력 및 자기소개")
+        
+        if st.form_submit_button("신규 등록 실행"):
             if n_name:
                 df_curr = load_data()
-                new_row = [["", n_name, n_role, n_faith, "출석 중", format_phone(n_phone), n_email, str(n_birth), n_addr, "", "", n_note, str(n_apply), str(n_reg), n_history]]
-                save_to_google(pd.concat([df_curr, pd.DataFrame(new_row, columns=df_curr.columns)], ignore_index=True))
-                st.success("등록되었습니다!"); st.rerun()
+                new_row = {col: "" for col in df_curr.columns if col != 'id'}
+                new_row.update({
+                    "이름": n_name, "직분": n_role, "신급": n_faith, 
+                    "생년월일": n_birth, "전화번호": format_phone(n_phone), 
+                    "이메일": n_email, "주소": n_addr, "사역이력": n_history, "상태": "출석 중"
+                })
+                save_to_google(pd.concat([df_curr, pd.DataFrame([new_row])], ignore_index=True))
+                st.success(f"{n_name} 성도님이 성공적으로 등록되었습니다."); st.rerun()
+            else:
+                st.warning("이름은 필수 입력 항목입니다.")
 
-elif menu == "3. PDF 주소록 만들기":
-    st.header("🖨️ PDF 주소록 생성")
+elif menu == "주소록 PDF 생성":
+    st.header("🖨️ 교구 주소록 PDF 출력")
     df = load_data()
-    t_status = st.multiselect("출력할 상태 선택", STATUS_OPTIONS[1:], default=["출석 중"])
-    col_a, col_b = st.columns(2)
-    with col_a: i_birth, i_phone = st.checkbox("생년월일 포함", True), st.checkbox("전화번호 포함", True)
-    with col_b: i_addr, i_history = st.checkbox("주소 포함", True), st.checkbox("사역이력 포함", False)
-
-    if st.button("📄 PDF 생성 및 다운로드"):
+    t_status = st.multiselect("출력 대상 상태", STATUS_OPTIONS[1:], default=["출석 중"])
+    
+    if st.button("📄 PDF 주소록 생성 시작"):
         pdf = FPDF()
-        try: pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf'); f_name = 'Nanum'
-        except: f_name = 'Arial'
-        pdf.add_page(); pdf.set_font(f_name, '', 16)
-        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C'); pdf.ln(5)
-        p_df = df[df['상태'].isin(t_status)].copy()
-        p_df['addr_key'] = p_df['주소'].str.strip()
-        groups = []
-        for addr, group in p_df.groupby('addr_key', sort=False):
-            if addr and addr != "nan": groups.append({'group': group, 'name': group.iloc[0]['이름']})
-        for item in sorted(groups, key=lambda x: x['name']):
-            g = item['group']
-            y = pdf.get_y()
-            if y > 230: pdf.add_page(); y = pdf.get_y()
-            x = 10
-            for _, m in g.iterrows():
-                if x > 85: break
-                pic = m['사진']
-                if pic and "base64," in pic:
-                    try: pdf.image(io.BytesIO(base64.b64decode(pic.split(",")[1])), x=x, y=y, w=30, h=30)
-                    except: pdf.rect(x, y, 30, 30)
-                elif os.path.exists("church_icon.png"): pdf.image("church_icon.png", x=x, y=y, w=30, h=30)
-                else: pdf.rect(x, y, 30, 30)
-                pdf.set_xy(x, y+31); pdf.set_font(f_name, '', 8); pdf.cell(30, 5, m['이름'], align='C')
-                x += 32
-            pdf.set_xy(110, y); pdf.set_font(f_name, '', 12)
-            pdf.multi_cell(0, 7, " / ".join([f"{r['이름']} {r['직분']}" for _, r in g.iterrows()]))
-            pdf.set_font(f_name, '', 10); rep, info = g.iloc[0], []
-            if i_birth and rep['생년월일']: info.append(f"생일: {rep['생년월일']}")
-            if i_phone and rep['전화번호']: info.append(f"전화: {rep['전화번호']}")
-            if i_addr and rep['주소']: info.append(f"주소: {rep['주소']}")
-            if i_history and rep['사역이력']: info.append(f"사역: {rep['사역이력']}")
-            pdf.set_x(110); pdf.multi_cell(0, 6, "\n".join(info)); pdf.set_y(y + 45)
-        st.download_button("📥 다운로드", data=bytes(pdf.output()), file_name="AddressBook.pdf")
+        pdf.add_page()
+        # 한글 폰트 설정 (폰트 파일이 없을 경우 대비 예외처리)
+        try:
+            pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf')
+            pdf.set_font('Nanum', '', 14)
+        except:
+            pdf.set_font('Arial', '', 14)
+            
+        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
+        pdf.ln(10)
+        
+        target_df = df[df['상태'].isin(t_status)]
+        for _, row in target_df.iterrows():
+            pdf.set_font('', 'B', 12)
+            pdf.cell(0, 8, f"{row['이름']} {row['직분']} ({row['상태']})", ln=True)
+            pdf.set_font('', '', 10)
+            pdf.cell(0, 6, f"전화: {row['전화번호']} | 주소: {row['주소']}", ln=True)
+            pdf.ln(3)
+            
+        st.download_button("📥 생성된 PDF 다운로드", data=bytes(pdf.output()), file_name="Church_AddressBook.pdf")
