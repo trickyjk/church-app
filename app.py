@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v5.5)")
+st.title("⛪ 킹스턴한인교회 교적부 (v5.6)")
 
 # --- [기능] 데이터 포맷 및 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -91,11 +91,12 @@ def save_to_google(df):
 
 ROLE_OPTIONS = ["목사", "전도사", "장로", "권사", "안수집사", "집사", "성도", "청년"]
 FAITH_OPTIONS = ["유아세례", "입교", "세례", "해당없음"]
-STATUS_OPTIONS = ["출석 중", "새가족", "장기결석", "한국 체류", "타지역 체류", "유학 종료", "전출"]
+# [수정] 새가족, 유학 종료 삭제
+STATUS_OPTIONS = ["출석 중", "장기결석", "한국 체류", "타지역 체류", "전출"]
 
-menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
+menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 신규 등록", "3. PDF 주소록 만들기"])
 
-# 1. 성도 검색 및 수정 (동일)
+# 1. 성도 검색 및 수정
 if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
@@ -114,9 +115,9 @@ if menu == "1. 성도 검색 및 수정":
             "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS),
             "신급": st.column_config.SelectboxColumn("신급", options=FAITH_OPTIONS),
             "상태": st.column_config.SelectboxColumn("상태", options=STATUS_OPTIONS),
-            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1850, 1, 1), max_value=date(2100, 12, 31)),
+            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1850, 1, 1)),
             "전화번호": st.column_config.TextColumn("전화번호")
-        }, use_container_width=True, key="v5.5_editor")
+        }, use_container_width=True, key="v5.6_editor")
         if st.button("💾 정보 저장", type="primary"):
             edited_df['전화번호'] = edited_df['전화번호'].apply(format_phone)
             df.update(edited_df)
@@ -124,9 +125,9 @@ if menu == "1. 성도 검색 및 수정":
             st.success("정보가 저장되었습니다.")
             st.rerun()
 
-# 2. 새가족 등록 (동일)
-elif menu == "2. 새가족 등록":
-    st.header("📝 새가족 등록")
+# 2. 신규 등록
+elif menu == "2. 신규 등록":
+    st.header("📝 신규 성도 등록")
     if 'reg_success' in st.session_state and st.session_state.reg_success:
         st.success(f"✅ {st.session_state.last_name} 성도님 등록 완료!")
         st.session_state.reg_success = False
@@ -142,19 +143,21 @@ elif menu == "2. 새가족 등록":
         if st.form_submit_button("⛪ 성도 등록하기", type="primary"):
             if name:
                 df_curr = load_data()
-                new_row = pd.DataFrame([["", name, role, faith, "새가족", format_phone(phone), email, str(birth), addr, "", "", note, str(apply_date), str(reg_date), history]], columns=df_curr.columns)
+                # 기본 상태를 "출석 중"으로 설정
+                new_row = pd.DataFrame([["", name, role, faith, "출석 중", format_phone(phone), email, str(birth), addr, "", "", note, str(apply_date), str(reg_date), history]], columns=df_curr.columns)
                 save_to_google(pd.concat([df_curr, new_row], ignore_index=True))
                 st.session_state.reg_success, st.session_state.last_name = True, name
                 st.rerun()
             else: st.error("이름을 입력하세요.")
 
-# 3. PDF 주소록 만들기 (정렬 기능 추가)
+# 3. PDF 주소록 만들기
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
     
     st.subheader("👥 포함할 성도 선택")
-    target_status = st.multiselect("출력할 성도 상태 선택", options=STATUS_OPTIONS, default=["출석 중", "새가족"])
+    # 기본 선택 항목에서 '새가족' 제거
+    target_status = st.multiselect("출력할 성도 상태 선택", options=STATUS_OPTIONS, default=["출석 중"])
     
     st.subheader("📋 포함할 정보 선택")
     col_a, col_b, col_c = st.columns(3)
@@ -184,14 +187,13 @@ elif menu == "3. PDF 주소록 만들기":
         
         print_df['addr_key'] = print_df['주소'].str.strip()
         
-        # [핵심] 주소지 그룹별로 첫 번째 사람의 이름을 기준으로 ㄱ-ㅎ 정렬
         group_list = []
         for addr, group in print_df.groupby('addr_key', sort=False):
             if not addr or addr == "nan": continue
             first_name = group.iloc[0]['이름']
             group_list.append({'addr': addr, 'group': group, 'sort_key': first_name})
         
-        # 성씨 기준 가나다순 정렬
+        # 가나다순 정렬 (ㄱ-ㅎ)
         sorted_groups = sorted(group_list, key=lambda x: x['sort_key'])
         
         for item in sorted_groups:
