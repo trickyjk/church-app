@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v7.0)")
+st.title("⛪ 킹스턴한인교회 교적부 (v7.1)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -128,42 +128,50 @@ menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록"
 if menu == "1. 성도 관리":
     df = load_data()
     
-    # 2. 통합 검색창 (타이핑 + 선택)
     st.subheader("🔍 성도 검색 및 수정")
     all_names = sorted(df['이름'].unique())
     search_target = st.selectbox("이름을 입력하거나 목록에서 선택하세요:", [None] + all_names, placeholder="성함 입력...")
     
-    # 검색어에 따른 필터링
     filtered_df = df.copy()
     if search_target:
         filtered_df = filtered_df[filtered_df['이름'] == search_target]
     
     st.divider()
 
-    # 1. 가장 왼쪽에 "수정" 버튼이 있는 리스트 구현
-    st.write(f"📊 검색 결과: {len(filtered_df)}명")
+    # [수정포인트] 데이터프레임 내부에 수정 버튼 컬럼 추가
+    # 원본 인덱스를 보존하기 위해 'id' 컬럼 생성
+    display_df = filtered_df.copy()
+    display_df['수정'] = "✏️" # 버튼 모양 텍스트
     
-    # 버튼 배치를 위해 컬럼 생성
-    for idx, row in filtered_df.iterrows():
-        col_btn, col_list = st.columns([1, 12])
-        with col_btn:
-            if st.button(f"📝 수정", key=f"edit_{idx}"):
-                edit_member_dialog(idx, df)
-        with col_list:
-            # 개별 성도 정보를 한 줄로 깔끔하게 표시 (에디터 활용)
-            st.dataframe(
-                pd.DataFrame([row[["사진", "이름", "직분", "생년월일", "전화번호", "주소", "상태"]]]),
-                column_config={
-                    "사진": st.column_config.ImageColumn("사진", width="small"),
-                    "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
-                },
-                use_container_width=True, hide_index=True, key=f"row_{idx}"
-            )
+    # 컬럼 순서 재조정 (수정을 맨 앞으로)
+    cols_order = ["수정", "사진", "이름", "직분", "생년월일", "전화번호", "주소", "상태"]
+    display_df = display_df[cols_order]
+
+    st.write(f"📊 검색 결과: {len(display_df)}명")
+    
+    # 팝업을 트리거하기 위해 st.dataframe의 selection 기능을 활용
+    event = st.dataframe(
+        display_df,
+        column_config={
+            "수정": st.column_config.SelectboxColumn("선택", options=["✏️"], width="small"),
+            "사진": st.column_config.ImageColumn("사진", width="small"),
+            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
+        },
+        use_container_width=True,
+        hide_index=False, # 인덱스를 통해 member_id를 확인해야 하므로 표시
+        on_select="rerun",
+        selection_mode="single_row"
+    )
+
+    # 행을 클릭(선택)하면 팝업 열기
+    if len(event.selection.rows) > 0:
+        selected_idx = display_df.index[event.selection.rows[0]]
+        edit_member_dialog(selected_idx, df)
 
     st.divider()
     st.write("📖 전체 성도 리스트 (보기 전용)")
     st.dataframe(
-        df[["사진", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "비즈니스 주소", "상태"]],
+        df[["사진", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "상태"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
             "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
