@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.9)")
+st.title("⛪ 킹스턴한인교회 교적부 (v7.0)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -85,9 +85,7 @@ STATUS_OPTIONS = ["출석 중", "장기결석", "한국 체류", "타지역 체�
 # --- [상세 정보 수정 팝업 함수] ---
 @st.dialog("성도 상세 정보 및 수정")
 def edit_member_dialog(member_id, df):
-    # 최신 데이터를 반영하기 위해 df에서 직접 추출
     m_info = df.loc[member_id]
-    
     tab1, tab2 = st.tabs(["📄 정보 수정", "📷 사진 변경"])
     with tab1:
         with st.form("edit_form"):
@@ -102,38 +100,19 @@ def edit_member_dialog(member_id, df):
                 u_phone = st.text_input("전화번호", value=m_info['전화번호'])
                 u_email = st.text_input("이메일", value=m_info['이메일'])
                 u_addr = st.text_input("주소", value=m_info['주소'])
-            
             u_history = st.text_area("사역 이력", value=m_info['사역이력'])
-            
             st.write("**목양 이력**")
             st.text_area("기존 기록", value=m_info['심방기록'], height=100, disabled=True)
-            # [수정] "목양 노트"로 명칭 변경
             new_note = st.text_area("목양 노트 (새로운 내용 입력)")
-            
             if st.form_submit_button("💾 저장하기", type="primary"):
-                df.at[member_id, '이름'] = u_name
-                df.at[member_id, '직분'] = u_role
-                df.at[member_id, '신급'] = u_faith
-                df.at[member_id, '생년월일'] = u_birth
-                df.at[member_id, '상태'] = u_status
-                df.at[member_id, '전화번호'] = format_phone(u_phone)
-                df.at[member_id, '이메일'] = u_email
-                df.at[member_id, '주소'] = u_addr
-                df.at[member_id, '사역이력'] = u_history
-                
-                # [수정] 목양 노트 누적 로직 강화
+                df.at[member_id, '이름'], df.at[member_id, '직분'], df.at[member_id, '신급'] = u_name, u_role, u_faith
+                df.at[member_id, '생년월일'], df.at[member_id, '상태'], df.at[member_id, '전화번호'] = u_birth, u_status, format_phone(u_phone)
+                df.at[member_id, '이메일'], df.at[member_id, '주소'], df.at[member_id, '사역이력'] = u_email, u_addr, u_history
                 if new_note.strip():
                     log_entry = f"[{date.today().strftime('%Y-%m-%d')}] {new_note.strip()}"
                     current_log = str(m_info['심방기록'])
-                    if current_log and current_log.lower() != "nan" and current_log != "":
-                        df.at[member_id, '심방기록'] = f"{current_log}\n{log_entry}"
-                    else:
-                        df.at[member_id, '심방기록'] = log_entry
-                
-                save_to_google(df)
-                st.success("정보가 성공적으로 저장되었습니다.")
-                st.rerun()
-
+                    df.at[member_id, '심방기록'] = f"{current_log}\n{log_entry}" if current_log and current_log.lower() != "nan" else log_entry
+                save_to_google(df); st.success("저장되었습니다."); st.rerun()
     with tab2:
         if m_info['사진']: st.image(m_info['사진'], width=200)
         up_file = st.file_uploader("사진 업로드", type=['jpg', 'jpeg', 'png'])
@@ -141,51 +120,57 @@ def edit_member_dialog(member_id, df):
             cropped = st_cropper(Image.open(up_file), aspect_ratio=(1,1))
             if st.button("📷 사진 확정"):
                 df.at[member_id, '사진'] = image_to_base64(cropped)
-                save_to_google(df)
-                st.success("사진이 업데이트되었습니다.")
-                st.rerun()
+                save_to_google(df); st.rerun()
 
 # --- 메인 메뉴 ---
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록", "3. PDF 주소록 만들기"])
 
 if menu == "1. 성도 관리":
     df = load_data()
-    st.subheader("🔍 성도 검색 및 즉시 수정")
-    search_name = st.text_input("수정할 성도의 이름을 입력하세요", placeholder="이름을 치면 아래에 수정 버튼이 나타납니다.")
     
-    if search_name:
-        filtered = df[df['이름'].str.contains(search_name, na=False)]
-        if not filtered.empty:
-            for idx, row in filtered.iterrows():
-                if st.button(f"📝 {row['이름']} ({row['직분']}) 상세 팝업 열기", key=f"btn_{idx}"):
-                    edit_member_dialog(idx, df)
-        else: st.warning("찾으시는 성도가 없습니다.")
+    # 2. 통합 검색창 (타이핑 + 선택)
+    st.subheader("🔍 성도 검색 및 수정")
+    all_names = sorted(df['이름'].unique())
+    search_target = st.selectbox("이름을 입력하거나 목록에서 선택하세요:", [None] + all_names, placeholder="성함 입력...")
+    
+    # 검색어에 따른 필터링
+    filtered_df = df.copy()
+    if search_target:
+        filtered_df = filtered_df[filtered_df['이름'] == search_target]
     
     st.divider()
+
+    # 1. 가장 왼쪽에 "수정" 버튼이 있는 리스트 구현
+    st.write(f"📊 검색 결과: {len(filtered_df)}명")
     
-    list_cols = ["사진", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "비즈니스 주소", "상태"]
-    st.write("📊 리스트 즉시 수정 (수정 후 아래 저장 버튼 클릭)")
-    edited_df = st.data_editor(
-        df[list_cols],
+    # 버튼 배치를 위해 컬럼 생성
+    for idx, row in filtered_df.iterrows():
+        col_btn, col_list = st.columns([1, 12])
+        with col_btn:
+            if st.button(f"📝 수정", key=f"edit_{idx}"):
+                edit_member_dialog(idx, df)
+        with col_list:
+            # 개별 성도 정보를 한 줄로 깔끔하게 표시 (에디터 활용)
+            st.dataframe(
+                pd.DataFrame([row[["사진", "이름", "직분", "생년월일", "전화번호", "주소", "상태"]]]),
+                column_config={
+                    "사진": st.column_config.ImageColumn("사진", width="small"),
+                    "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
+                },
+                use_container_width=True, hide_index=True, key=f"row_{idx}"
+            )
+
+    st.divider()
+    st.write("📖 전체 성도 리스트 (보기 전용)")
+    st.dataframe(
+        df[["사진", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "비즈니스 주소", "상태"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
-            "이름": st.column_config.TextColumn("이름", width="small"),
-            "직분": st.column_config.SelectboxColumn("직분", options=ROLE_OPTIONS, width="small"),
-            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1900,1,1), max_value=date(2100,12,31), width="medium"),
-            "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
-            "이메일": st.column_config.TextColumn("이메일", width="medium"),
+            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
             "주소": st.column_config.TextColumn("주소", width="large"),
-            "비즈니스 주소": st.column_config.TextColumn("비즈니스 주소", width="medium"),
-            "상태": st.column_config.SelectboxColumn("상태", options=STATUS_OPTIONS, width="small"),
         },
-        use_container_width=True, hide_index=True, key="main_editor"
+        use_container_width=True, hide_index=True
     )
-
-    if st.button("💾 리스트 수정사항 전체 저장", type="primary"):
-        df.update(edited_df)
-        save_to_google(df)
-        st.success("리스트 데이터가 저장되었습니다.")
-        st.rerun()
 
 elif menu == "2. 신규 등록":
     st.header("📝 신규 성도 등록")
@@ -211,7 +196,6 @@ elif menu == "2. 신규 등록":
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
-    st.subheader("👥 포함할 대상 및 정보")
     t_status = st.multiselect("출력할 상태 선택", STATUS_OPTIONS, default=["출석 중"])
     col_a, col_b = st.columns(2)
     with col_a: i_birth, i_phone = st.checkbox("생년월일 포함", True), st.checkbox("전화번호 포함", True)
@@ -223,11 +207,13 @@ elif menu == "3. PDF 주소록 만들기":
         except: f_name = 'Arial'
         pdf.add_page(); pdf.set_font(f_name, '', 16)
         pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C'); pdf.ln(5)
+        
         p_df = df[df['상태'].isin(t_status)].copy()
         p_df['addr_key'] = p_df['주소'].str.strip()
         groups = []
         for addr, group in p_df.groupby('addr_key', sort=False):
             if addr and addr != "nan": groups.append({'group': group, 'name': group.iloc[0]['이름']})
+        
         for item in sorted(groups, key=lambda x: x['name']):
             g = item['group']
             y = pdf.get_y()
