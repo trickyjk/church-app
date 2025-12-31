@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.3)")
+st.title("⛪ 킹스턴한인교회 교적부 (v6.4)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -74,12 +74,8 @@ def save_to_google(df):
         sheet.clear()
         sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
 
-# 직분 및 신급 옵션
-ROLE_OPTIONS = [
-    "목사", "장로", "전도사", "시무권사", 
-    "협동목사", "협동장로", "협동권사", "협동안수집사",
-    "은퇴장로", "은퇴권사", "은퇴협동권사", "집사", "청년", "성도"
-]
+# 옵션 리스트
+ROLE_OPTIONS = ["목사", "장로", "전도사", "시무권사", "협동목사", "협동장로", "협동권사", "협동안수집사", "은퇴장로", "은퇴권사", "은퇴협동권사", "집사", "청년", "성도"]
 FAITH_OPTIONS = ["유아세례", "아동세례", "입교", "세례", "해당없음"]
 STATUS_OPTIONS = ["출석 중", "장기결석", "한국 체류", "타지역 체류", "전출"]
 
@@ -126,31 +122,40 @@ menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록"
 if menu == "1. 성도 관리":
     df = load_data()
     
-    # [수정 포인트] 첫 화면 맨 위에 선택 옵션 배치
-    # 옵션 리스트 정렬 (이름 가나다순)
-    sorted_indices = df.sort_values('이름').index
+    # [변경 포인트] 직접 타이핑하여 검색하는 창 배치
+    st.subheader("🔍 성도 직접 검색")
+    search_name = st.text_input("성도 이름을 입력하세요 (예: 홍길동)", placeholder="이름을 입력하면 결과가 즉시 필터링됩니다.")
     
-    selected_target = st.selectbox("✏️ 수정을 원하는 성도 이름을 선택하면 팝업이 열립니다:", 
-                                  options=[None] + list(sorted_indices),
-                                  format_func=lambda x: f"{df.loc[x, '이름']}" if x else "성도를 선택하세요")
-    
-    if selected_target:
-        edit_member_dialog(selected_target, df)
+    # 검색어에 따른 데이터 필터링
+    filtered_df = df.copy()
+    if search_name:
+        filtered_df = filtered_df[filtered_df['이름'].str.contains(search_name, na=False)]
     
     st.divider()
     
-    # 전체 리스트 보여주기 (참고용)
-    st.write(f"📊 현재 등록된 성도 리스트 (총 {len(df)}명)")
+    # 필터링된 결과 리스트에서 바로 선택할 수 있게 드롭다운 재배치 (검색된 인원만 표시됨)
+    if not filtered_df.empty:
+        target_id = st.selectbox(
+            f"🎯 검색 결과 ({len(filtered_df)}명) 중 상세 정보를 수정할 분을 선택하세요:",
+            options=[None] + list(filtered_df.index),
+            format_func=lambda x: f"{filtered_df.loc[x, '이름']} {filtered_df.loc[x, '직분']}" if x else "성도를 선택해 주세요"
+        )
+        if target_id:
+            edit_member_dialog(target_id, df)
+    else:
+        st.warning("입력하신 이름의 성도님을 찾을 수 없습니다.")
+
+    st.divider()
+    
+    # 전체 리스트 (참고용)
+    st.write("📊 전체 성도 현황")
     st.dataframe(
         df[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
             "이름": st.column_config.TextColumn("이름", width="small"),
             "직분": st.column_config.TextColumn("직분", width="small"),
-            "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
-            "상태": st.column_config.TextColumn("상태", width="small"),
             "주소": st.column_config.TextColumn("주소", width="large"),
-            "사역이력": st.column_config.TextColumn("사역이력", width="large"),
         },
         use_container_width=True,
         hide_index=True
