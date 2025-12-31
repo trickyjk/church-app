@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.2)")
+st.title("⛪ 킹스턴한인교회 교적부 (v6.3)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -121,26 +121,28 @@ def edit_member_dialog(member_id, df):
                 save_to_google(df); st.rerun()
 
 # --- 메인 메뉴 ---
-menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 관리", "2. 신규 등록", "3. PDF 주소록 만들기"])
+menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록", "3. PDF 주소록 만들기"])
 
-if menu == "1. 성도 검색 및 관리":
+if menu == "1. 성도 관리":
     df = load_data()
-    col_s1, col_s2 = st.columns([3, 1])
-    with col_s1: search = st.text_input("이름, 전화번호, 사역 검색")
-    with col_s2: s_status = st.multiselect("상태 필터", STATUS_OPTIONS, default=["출석 중"])
     
-    results = df.copy()
-    if s_status: results = results[results['상태'].isin(s_status)]
-    if search:
-        results = results[results['이름'].str.contains(search, na=False) | 
-                          results['전화번호'].str.contains(search, na=False) | 
-                          results['사역이력'].str.contains(search, na=False)]
+    # [수정 포인트] 첫 화면 맨 위에 선택 옵션 배치
+    # 옵션 리스트 정렬 (이름 가나다순)
+    sorted_indices = df.sort_values('이름').index
     
-    st.write(f"총 {len(results)}명")
-
-    # [수정 포인트] Column Config를 통한 Cell 너비 최적화 (Autosize 효과)
+    selected_target = st.selectbox("✏️ 수정을 원하는 성도 이름을 선택하면 팝업이 열립니다:", 
+                                  options=[None] + list(sorted_indices),
+                                  format_func=lambda x: f"{df.loc[x, '이름']}" if x else "성도를 선택하세요")
+    
+    if selected_target:
+        edit_member_dialog(selected_target, df)
+    
+    st.divider()
+    
+    # 전체 리스트 보여주기 (참고용)
+    st.write(f"📊 현재 등록된 성도 리스트 (총 {len(df)}명)")
     st.dataframe(
-        results[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
+        df[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
             "이름": st.column_config.TextColumn("이름", width="small"),
@@ -153,13 +155,6 @@ if menu == "1. 성도 검색 및 관리":
         use_container_width=True,
         hide_index=True
     )
-
-    selected_target = st.selectbox("✏️ 수정을 원하는 성도 이름을 선택하면 팝업이 열립니다:", 
-                                  options=[None] + list(results.index),
-                                  format_func=lambda x: f"▶ {results.loc[x, '이름']} {results.loc[x, '직분']}" if x else "성도를 선택하세요")
-    
-    if selected_target:
-        edit_member_dialog(selected_target, df)
 
 elif menu == "2. 신규 등록":
     st.header("📝 신규 성도 등록")
@@ -181,7 +176,6 @@ elif menu == "2. 신규 등록":
                 st.success("등록되었습니다!"); st.rerun()
 
 elif menu == "3. PDF 주소록 만들기":
-    # 이전 버전과 동일 (안정적)
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
     t_status = st.multiselect("대상 상태", STATUS_OPTIONS, default=["출석 중"])
