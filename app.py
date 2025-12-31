@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v6.4)")
+st.title("⛪ 킹스턴한인교회 교적부 (v6.6 통합 최종본)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -61,6 +61,9 @@ def load_data():
     for c in cols:
         if c not in df.columns: df[c] = ""
     df['생년월일'] = df['생년월일'].apply(safe_parse_date)
+    df['등록신청일'] = df['등록신청일'].apply(safe_parse_date)
+    df['등록일'] = df['등록일'].apply(safe_parse_date)
+    df['전화번호'] = df['전화번호'].apply(format_phone)
     df.index = range(1, len(df) + 1)
     return df[cols]
 
@@ -91,7 +94,7 @@ def edit_member_dialog(member_id, df):
                 u_name = st.text_input("이름", value=m_info['이름'])
                 u_role = st.selectbox("직분", ROLE_OPTIONS, index=ROLE_OPTIONS.index(m_info['직분']) if m_info['직분'] in ROLE_OPTIONS else len(ROLE_OPTIONS)-1)
                 u_faith = st.selectbox("신급", FAITH_OPTIONS, index=FAITH_OPTIONS.index(m_info['신급']) if m_info['신급'] in FAITH_OPTIONS else 4)
-                u_birth = st.date_input("생년월일", value=m_info['생년월일'] if m_info['생년월일'] else date(2000,1,1))
+                u_birth = st.date_input("생년월일", value=m_info['생년월일'] if m_info['생년월일'] else date(2000,1,1), min_value=date(1900,1,1), max_value=date(2100,12,31))
             with c2:
                 u_status = st.selectbox("상태", STATUS_OPTIONS, index=STATUS_OPTIONS.index(m_info['상태']) if m_info['상태'] in STATUS_OPTIONS else 0)
                 u_phone = st.text_input("전화번호", value=m_info['전화번호'])
@@ -106,7 +109,7 @@ def edit_member_dialog(member_id, df):
                 if new_note:
                     log = f"[{date.today()}] {new_note}"; old = m_info['심방기록']
                     df.at[member_id, '심방기록'] = f"{old}\n{log}" if old else log
-                save_to_google(df); st.success("성공적으로 저장되었습니다."); st.rerun()
+                save_to_google(df); st.success("저장되었습니다."); st.rerun()
     with tab2:
         if m_info['사진']: st.image(m_info['사진'], width=200)
         up_file = st.file_uploader("사진 업로드", type=['jpg', 'jpeg', 'png'])
@@ -121,45 +124,19 @@ menu = st.sidebar.radio("메뉴 선택", ["1. 성도 관리", "2. 신규 등록"
 
 if menu == "1. 성도 관리":
     df = load_data()
-    
-    # [변경 포인트] 직접 타이핑하여 검색하는 창 배치
-    st.subheader("🔍 성도 직접 검색")
-    search_name = st.text_input("성도 이름을 입력하세요 (예: 홍길동)", placeholder="이름을 입력하면 결과가 즉시 필터링됩니다.")
-    
-    # 검색어에 따른 데이터 필터링
-    filtered_df = df.copy()
+    st.subheader("🔍 성도 검색 및 즉시 수정")
+    search_name = st.text_input("수정할 성도의 이름을 입력하세요", placeholder="이름을 치면 아래에 수정 버튼이 나타납니다.")
     if search_name:
-        filtered_df = filtered_df[filtered_df['이름'].str.contains(search_name, na=False)]
-    
+        filtered = df[df['이름'].str.contains(search_name, na=False)]
+        if not filtered.empty:
+            for idx, row in filtered.iterrows():
+                if st.button(f"📝 {row['이름']} ({row['직분']}) 수정하기", key=f"btn_{idx}"):
+                    edit_member_dialog(idx, df)
+        else: st.warning("찾으시는 성도가 없습니다.")
     st.divider()
-    
-    # 필터링된 결과 리스트에서 바로 선택할 수 있게 드롭다운 재배치 (검색된 인원만 표시됨)
-    if not filtered_df.empty:
-        target_id = st.selectbox(
-            f"🎯 검색 결과 ({len(filtered_df)}명) 중 상세 정보를 수정할 분을 선택하세요:",
-            options=[None] + list(filtered_df.index),
-            format_func=lambda x: f"{filtered_df.loc[x, '이름']} {filtered_df.loc[x, '직분']}" if x else "성도를 선택해 주세요"
-        )
-        if target_id:
-            edit_member_dialog(target_id, df)
-    else:
-        st.warning("입력하신 이름의 성도님을 찾을 수 없습니다.")
-
-    st.divider()
-    
-    # 전체 리스트 (참고용)
-    st.write("📊 전체 성도 현황")
-    st.dataframe(
-        df[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
-        column_config={
-            "사진": st.column_config.ImageColumn("사진", width="small"),
-            "이름": st.column_config.TextColumn("이름", width="small"),
-            "직분": st.column_config.TextColumn("직분", width="small"),
-            "주소": st.column_config.TextColumn("주소", width="large"),
-        },
-        use_container_width=True,
-        hide_index=True
-    )
+    st.dataframe(df[["사진", "이름", "직분", "전화번호", "상태", "주소", "사역이력"]],
+                 column_config={"사진": st.column_config.ImageColumn("사진", width="small")},
+                 use_container_width=True, hide_index=True)
 
 elif menu == "2. 신규 등록":
     st.header("📝 신규 성도 등록")
@@ -169,29 +146,63 @@ elif menu == "2. 신규 등록":
             n_name = st.text_input("이름 (필수)")
             n_role = st.selectbox("직분", ROLE_OPTIONS, index=len(ROLE_OPTIONS)-1)
             n_faith = st.selectbox("신급", FAITH_OPTIONS, index=4)
-            n_birth = st.date_input("생년월일", value=date(2000, 1, 1))
+            n_birth = st.date_input("생년월일", value=date(2000, 1, 1), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
+            n_apply = st.date_input("등록 신청일", value=date.today(), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
+            n_reg = st.date_input("등록일", value=date.today(), min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
         with c2:
-            n_phone, n_addr = st.text_input("전화번호"), st.text_input("주소")
-            n_status = st.selectbox("상태", STATUS_OPTIONS)
+            n_phone, n_email, n_addr = st.text_input("전화번호"), st.text_input("이메일"), st.text_input("주소")
+            n_history, n_note = st.text_input("사역 이력"), st.text_area("목양 노트", height=150)
         if st.form_submit_button("등록하기", type="primary"):
             if n_name:
                 df_curr = load_data()
-                new_row = [["", n_name, n_role, n_faith, n_status, format_phone(n_phone), "", str(n_birth), n_addr, "", "", "", str(date.today()), str(date.today()), ""]]
+                new_row = [["", n_name, n_role, n_faith, "출석 중", format_phone(n_phone), n_email, str(n_birth), n_addr, "", "", n_note, str(n_apply), str(n_reg), n_history]]
                 save_to_google(pd.concat([df_curr, pd.DataFrame(new_row, columns=df_curr.columns)], ignore_index=True))
                 st.success("등록되었습니다!"); st.rerun()
 
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
-    t_status = st.multiselect("대상 상태", STATUS_OPTIONS, default=["출석 중"])
-    if st.button("📄 PDF 생성"):
+    st.subheader("👥 포함할 대상 및 정보")
+    t_status = st.multiselect("출력할 상태 선택", STATUS_OPTIONS, default=["출석 중"])
+    col_a, col_b = st.columns(2)
+    with col_a: i_birth, i_phone = st.checkbox("생년월일 포함", True), st.checkbox("전화번호 포함", True)
+    with col_b: i_addr, i_history = st.checkbox("주소 포함", True), st.checkbox("사역이력 포함", False)
+
+    if st.button("📄 PDF 생성 및 다운로드"):
         pdf = FPDF()
         try: pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf'); f_name = 'Nanum'
         except: f_name = 'Arial'
         pdf.add_page(); pdf.set_font(f_name, '', 16)
-        pdf.cell(0, 10, "KKC Address Book", ln=True, align='C'); pdf.ln(5)
+        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C'); pdf.ln(5)
+        
         p_df = df[df['상태'].isin(t_status)].copy()
-        for _, m in p_df.sort_values('이름').iterrows():
-            pdf.set_font(f_name, '', 12)
-            pdf.cell(0, 10, f"{m['이름']} {m['직분']} | {m['전화번호']} | {m['주소']}", ln=True)
+        p_df['addr_key'] = p_df['주소'].str.strip()
+        groups = []
+        for addr, group in p_df.groupby('addr_key', sort=False):
+            if addr and addr != "nan": groups.append({'group': group, 'name': group.iloc[0]['이름']})
+        
+        # 가나다 순 정렬
+        for item in sorted(groups, key=lambda x: x['name']):
+            g = item['group']
+            y = pdf.get_y()
+            if y > 230: pdf.add_page(); y = pdf.get_y()
+            x = 10
+            for _, m in g.iterrows():
+                if x > 85: break
+                pic = m['사진']
+                if pic and "base64," in pic:
+                    try: pdf.image(io.BytesIO(base64.b64decode(pic.split(",")[1])), x=x, y=y, w=30, h=30)
+                    except: pdf.rect(x, y, 30, 30)
+                elif os.path.exists("church_icon.png"): pdf.image("church_icon.png", x=x, y=y, w=30, h=30)
+                else: pdf.rect(x, y, 30, 30)
+                pdf.set_xy(x, y+31); pdf.set_font(f_name, '', 8); pdf.cell(30, 5, m['이름'], align='C')
+                x += 32
+            pdf.set_xy(110, y); pdf.set_font(f_name, '', 12)
+            pdf.multi_cell(0, 7, " / ".join([f"{r['이름']} {r['직분']}" for _, r in g.iterrows()]))
+            pdf.set_font(f_name, '', 10); rep, info = g.iloc[0], []
+            if i_birth and rep['생년월일']: info.append(f"생일: {rep['생년월일']}")
+            if i_phone and rep['전화번호']: info.append(f"전화: {rep['전화번호']}")
+            if i_addr and rep['주소']: info.append(f"주소: {rep['주소']}")
+            if i_history and rep['사역이력']: info.append(f"사역: {rep['사역이력']}")
+            pdf.set_x(110); pdf.multi_cell(0, 6, "\n".join(info)); pdf.set_y(y + 45)
         st.download_button("📥 다운로드", data=bytes(pdf.output()), file_name="AddressBook.pdf")
