@@ -17,7 +17,7 @@ SHEET_NAME = '교적부_데이터'
 
 # 화면 설정
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v5.4)")
+st.title("⛪ 킹스턴한인교회 교적부 (v5.5)")
 
 # --- [기능] 데이터 포맷 및 이미지 처리 함수 ---
 def image_to_base64(img):
@@ -95,7 +95,7 @@ STATUS_OPTIONS = ["출석 중", "새가족", "장기결석", "한국 체류", "�
 
 menu = st.sidebar.radio("메뉴 선택", ["1. 성도 검색 및 수정", "2. 새가족 등록", "3. PDF 주소록 만들기"])
 
-# 1. 성도 검색 및 수정
+# 1. 성도 검색 및 수정 (동일)
 if menu == "1. 성도 검색 및 수정":
     st.header("🔍 성도 검색 및 관리")
     df = load_data()
@@ -116,7 +116,7 @@ if menu == "1. 성도 검색 및 수정":
             "상태": st.column_config.SelectboxColumn("상태", options=STATUS_OPTIONS),
             "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", min_value=date(1850, 1, 1), max_value=date(2100, 12, 31)),
             "전화번호": st.column_config.TextColumn("전화번호")
-        }, use_container_width=True, key="v5.4_editor")
+        }, use_container_width=True, key="v5.5_editor")
         if st.button("💾 정보 저장", type="primary"):
             edited_df['전화번호'] = edited_df['전화번호'].apply(format_phone)
             df.update(edited_df)
@@ -124,7 +124,7 @@ if menu == "1. 성도 검색 및 수정":
             st.success("정보가 저장되었습니다.")
             st.rerun()
 
-# 2. 새가족 등록 (동일 유지)
+# 2. 새가족 등록 (동일)
 elif menu == "2. 새가족 등록":
     st.header("📝 새가족 등록")
     if 'reg_success' in st.session_state and st.session_state.reg_success:
@@ -148,14 +148,13 @@ elif menu == "2. 새가족 등록":
                 st.rerun()
             else: st.error("이름을 입력하세요.")
 
-# 3. PDF 주소록 만들기 (필터 기능 추가)
+# 3. PDF 주소록 만들기 (정렬 기능 추가)
 elif menu == "3. PDF 주소록 만들기":
     st.header("🖨️ PDF 주소록 생성")
     df = load_data()
     
-    # [추가] 포함할 성도 선택 필터
     st.subheader("👥 포함할 성도 선택")
-    target_status = st.multiselect("출력할 성도 상태 선택 (미선택 시 전체 출력)", options=STATUS_OPTIONS, default=["출석 중", "새가족"])
+    target_status = st.multiselect("출력할 성도 상태 선택", options=STATUS_OPTIONS, default=["출석 중", "새가족"])
     
     st.subheader("📋 포함할 정보 선택")
     col_a, col_b, col_c = st.columns(3)
@@ -164,7 +163,6 @@ elif menu == "3. PDF 주소록 만들기":
     with col_c: inc_history = st.checkbox("사역이력 포함", False)
 
     if st.button("📄 주소록 PDF 생성"):
-        # 필터 적용
         print_df = df.copy()
         if target_status:
             print_df = print_df[print_df['상태'].isin(target_status)]
@@ -176,21 +174,28 @@ elif menu == "3. PDF 주소록 만들기":
         pdf = FPDF()
         try:
             pdf.add_font('Nanum', '', 'NanumGothic-Regular.ttf') 
-            pdf.set_font('Nanum', '', 12)
-            font_ok = True
+            pdf.set_font('Nanum', '', 12); font_ok = True
         except:
             pdf.set_font("Arial", '', 12); font_ok = False
         
         pdf.add_page()
         pdf.set_font('Nanum' if font_ok else 'Arial', '', 16)
-        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C')
-        pdf.ln(5)
+        pdf.cell(0, 10, "Kingston Korean Church Address Book", ln=True, align='C'); pdf.ln(5)
         
         print_df['addr_key'] = print_df['주소'].str.strip()
-        grouped = print_df.groupby('addr_key', sort=False)
         
-        for addr, group in grouped:
+        # [핵심] 주소지 그룹별로 첫 번째 사람의 이름을 기준으로 ㄱ-ㅎ 정렬
+        group_list = []
+        for addr, group in print_df.groupby('addr_key', sort=False):
             if not addr or addr == "nan": continue
+            first_name = group.iloc[0]['이름']
+            group_list.append({'addr': addr, 'group': group, 'sort_key': first_name})
+        
+        # 성씨 기준 가나다순 정렬
+        sorted_groups = sorted(group_list, key=lambda x: x['sort_key'])
+        
+        for item in sorted_groups:
+            addr, group = item['addr'], item['group']
             y_start = pdf.get_y()
             if y_start > 230: pdf.add_page(); y_start = pdf.get_y()
             x_pos = 10
@@ -214,7 +219,7 @@ elif menu == "3. PDF 주소록 만들기":
             names_text = " / ".join([f"{r['이름']} {r['직분']}" for _, r in group.iterrows()])
             pdf.set_xy(110, y_start); pdf.set_font('Nanum' if font_ok else 'Arial', '', 12)
             pdf.multi_cell(0, 7, names_text)
-            pdf.set_font('Nanum' if font_ok else 'Arial', '', 10); rep, info_lines = group.iloc[0], []
+            pdf.set_font('Nanum' if font_ok else 'Arial', '', 10); rep = group.iloc[0]; info_lines = []
             if inc_birth and rep['생년월일']: info_lines.append(f"생일: {rep['생년월일']}")
             if inc_phone and rep['전화번호']: info_lines.append(f"전화: {rep['전화번호']}")
             if inc_addr and rep['주소']: info_lines.append(f"주소: {rep['주소']}")
