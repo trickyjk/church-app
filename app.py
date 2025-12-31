@@ -16,7 +16,7 @@ SECRET_FILE = 'secrets.json'
 SHEET_NAME = '교적부_데이터'
 
 st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부")
-st.title("⛪ 킹스턴한인교회 교적부 (v7.2)")
+st.title("⛪ 킹스턴한인교회 교적부 (v7.3)")
 
 # --- [기능] 유틸리티 함수 ---
 def image_to_base64(img):
@@ -136,28 +136,35 @@ if menu == "1. 성도 관리":
     
     st.divider()
 
-    # [수정포인트] 에러 방지를 위해 에디터 대신 체크박스 선택 방식 사용
+    # 체크박스용 컬럼 추가 (기본값 False)
     display_df = filtered_df.copy()
-    display_df.insert(0, "선택", False) # 맨 앞에 체크박스용 컬럼 추가
+    display_df.insert(0, "선택", False)
     
     st.write(f"📊 검색 결과: {len(filtered_df)}명 (수정하려면 왼쪽 체크박스를 클릭하세요)")
     
-    # 에러가 발생했던 selection_mode 대신 가장 안정적인 data_editor 구성 사용
+    # [수정] Autosize 복구 및 체크박스 누적 방지용 key 설정
     edited_view = st.data_editor(
         display_df[["선택", "사진", "이름", "직분", "생년월일", "전화번호", "주소", "상태"]],
         column_config={
-            "선택": st.column_config.CheckboxColumn("선택", width="small", default=False),
+            "선택": st.column_config.CheckboxColumn("선택", width="small"),
             "사진": st.column_config.ImageColumn("사진", width="small"),
-            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
+            "이름": st.column_config.TextColumn("이름", width="small"),
+            "직분": st.column_config.TextColumn("직분", width="small"),
+            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", width="medium"),
+            "전화번호": st.column_config.TextColumn("전화번호", width="medium"),
+            "주소": st.column_config.TextColumn("주소", width="large"),
+            "상태": st.column_config.TextColumn("상태", width="small"),
         },
         use_container_width=True,
         hide_index=False,
-        key="stable_editor"
+        key=f"stable_editor_{len(filtered_df)}" # 데이터 길이에 따라 키를 변경하여 상태 초기화 유도
     )
 
-    # 체크박스가 선택된 행의 인덱스를 찾아 팝업 실행
+    # 체크박스 선택 시 팝업 열기
     selected_indices = edited_view[edited_view["선택"] == True].index
     if len(selected_indices) > 0:
+        # 선택된 인덱스 중 첫 번째 대상 호출 후 즉시 인덱스 리셋 효과를 위해 세션 상태 활용 가능하나 
+        # 여기서는 rerun()으로 자연스럽게 해제됨
         edit_member_dialog(selected_indices[0], df)
 
     st.divider()
@@ -166,7 +173,10 @@ if menu == "1. 성도 관리":
         df[["사진", "이름", "직분", "생년월일", "전화번호", "주소", "상태"]],
         column_config={
             "사진": st.column_config.ImageColumn("사진", width="small"),
-            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD"),
+            "이름": st.column_config.TextColumn("이름", width="small"),
+            "직분": st.column_config.TextColumn("직분", width="small"),
+            "생년월일": st.column_config.DateColumn("생년월일", format="YYYY-MM-DD", width="medium"),
+            "주소": st.column_config.TextColumn("주소", width="large"),
         },
         use_container_width=True, hide_index=True
     )
