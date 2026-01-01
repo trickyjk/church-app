@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.3")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.4")
 
 @st.cache_resource
 def get_font():
@@ -150,7 +150,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.3")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.4")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -170,15 +170,14 @@ if menu == "성도 관리":
         # [수정] Grid 옵션 설정
         gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
         
-        # [핵심 수정] 체크박스를 확실히 띄우기 위해 pinned 옵션을 제거하거나 체크박스 설정을 강화
-        gb.configure_selection(selection_mode='single', use_checkbox=True, headerCheckboxSelection=True)
+        # [수정 완료] 에러를 유발하던 headerCheckboxSelection 옵션 제거
+        gb.configure_selection(selection_mode='single', use_checkbox=True)
         
         gb.configure_column("id", hide=True)
         gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_js, width=70)
         
-        # [핵심 수정] '이름' 컬럼의 pinned='left'를 제거하여 체크박스가 가려지는 문제 해결
+        # 이름 컬럼 고정(pinned) 해제 -> 체크박스 가림 현상 방지
         gb.configure_column("이름", width=100) 
-        
         gb.configure_column("상태", width=90)
         
         grid_opts = gb.build()
@@ -291,3 +290,62 @@ elif menu == "PDF 주소록 생성":
             
             text_x = photo_x + photo_width + 5
             pdf.set_xy(text_x, start_y)
+            
+            names = []
+            for _, mem in group.iterrows():
+                names.append(mem['이름'])
+            
+            pdf.set_font("Nanum", "", 14) 
+            full_name_str = ", ".join(names)
+            
+            role_str = ""
+            if "직분" in sel_infos:
+                roles = [m['직분'] for _, m in group.iterrows() if m['직분']]
+                role_str = " ".join(list(set(roles)))
+            
+            pdf.cell(100, 8, full_name_str, ln=0)
+            pdf.set_font("Nanum", "", 11)
+            pdf.cell(0, 8, role_str, ln=1, align='R')
+            
+            current_text_y = pdf.get_y()
+            pdf.set_xy(text_x, current_text_y)
+            pdf.set_font("Nanum", "", 10)
+            
+            if "자녀/가족" in sel_infos:
+                families = [m['가족'] for _, m in group.iterrows() if m['가족'].strip()]
+                if families:
+                    family_str = ", ".join(list(set(families))) 
+                    pdf.cell(0, 6, f"{family_str}", ln=1)
+                    pdf.set_x(text_x)
+
+            if "전화번호" in sel_infos:
+                phones = []
+                for _, mem in group.iterrows():
+                    if mem['전화번호'].strip():
+                        phones.append(f"{mem['이름'][0]} {mem['전화번호']}") 
+                if phones:
+                    pdf.cell(0, 6, " / ".join(phones), ln=1)
+                    pdf.set_x(text_x)
+
+            pdf.cell(0, 6, f"{addr}", ln=1)
+            pdf.set_x(text_x)
+
+            if "생년월일" in sel_infos:
+                 births = []
+                 for _, mem in group.iterrows():
+                     births.append(f"{mem['이름']}:{mem['생년월일']}")
+                 if births:
+                     pdf.cell(0, 6, " ".join(births), ln=1)
+                     pdf.set_x(text_x)
+
+            if "이메일" in sel_infos:
+                emails = [m['이메일'] for _, m in group.iterrows() if m['이메일'].strip()]
+                if emails:
+                    pdf.cell(0, 6, ", ".join(emails), ln=1)
+
+            end_y = pdf.get_y()
+            block_height = max(photo_height, end_y - start_y)
+            pdf.set_y(start_y + block_height + 5) 
+            
+        st.success("PDF 생성이 완료되었습니다!")
+        st.download_button("📥 주소록 PDF 다운로드", data=bytes(pdf.output()), file_name=f"교적부_{date.today()}.pdf")
