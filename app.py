@@ -18,14 +18,13 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.2")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.3")
 
 @st.cache_resource
 def get_font():
     """PDF 생성용 한글 폰트(나눔고딕) 다운로드 및 캐싱"""
     font_path = "NanumGothic.ttf"
     if not os.path.exists(font_path):
-        # 구글 폰트 등 안정적인 소스에서 다운로드
         f_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
         try:
             response = requests.get(f_url)
@@ -151,7 +150,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.2")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.3")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -168,11 +167,18 @@ if menu == "성도 관리":
         }
         """)
 
+        # [수정] Grid 옵션 설정
         gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
-        gb.configure_selection('single', use_checkbox=True)
+        
+        # [핵심 수정] 체크박스를 확실히 띄우기 위해 pinned 옵션을 제거하거나 체크박스 설정을 강화
+        gb.configure_selection(selection_mode='single', use_checkbox=True, headerCheckboxSelection=True)
+        
         gb.configure_column("id", hide=True)
         gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_js, width=70)
-        gb.configure_column("이름", pinned='left', width=100)
+        
+        # [핵심 수정] '이름' 컬럼의 pinned='left'를 제거하여 체크박스가 가려지는 문제 해결
+        gb.configure_column("이름", width=100) 
+        
         gb.configure_column("상태", width=90)
         
         grid_opts = gb.build()
@@ -232,16 +238,13 @@ elif menu == "PDF 주소록 생성":
     st.header("🖨️ PDF 주소록 제작 (가족별 출력)")
     df = load_data()
     
-    # 1. 설정 섹션 (캡처본 스타일 구현을 위한 옵션)
     st.subheader("1. 출력 옵션 설정")
     col_opt1, col_opt2 = st.columns(2)
     with col_opt1:
-        # 상태 필터링
         all_statuses = list(df['상태'].unique()) if '상태' in df.columns else ["출석 중"]
         sel_statuses = st.multiselect("출력할 성도 상태 선택", all_statuses, default=["출석 중"])
     
     with col_opt2:
-        # 표시할 정보 선택
         info_options = ["직분", "자녀/가족", "전화번호", "생년월일", "이메일"]
         sel_infos = st.multiselect("주소록에 포함할 항목", info_options, default=["직분", "자녀/가족", "전화번호", "이메일"])
 
@@ -249,46 +252,33 @@ elif menu == "PDF 주소록 생성":
         font_path = get_font()
         if not font_path: st.stop()
 
-        # 데이터 필터링 및 정렬 (주소 기준 정렬 -> 가족 묶기 위함)
         filtered_df = df[df['상태'].isin(sel_statuses)].copy()
         filtered_df = filtered_df.sort_values(by=['주소', '이름'])
         
-        # PDF 초기화
         pdf = FPDF()
         pdf.add_page()
         pdf.add_font("Nanum", "", font_path, uni=True)
         
-        # 제목
         pdf.set_font("Nanum", "", 16)
         pdf.cell(0, 10, f"킹스턴 한인교회 주소록 ({date.today().year})", ln=True, align='L')
         pdf.ln(5)
 
-        # 주소별로 그룹핑 (가족 단위)
         grouped = filtered_df.groupby('주소')
 
-        # 각 그룹(가족/주소) 순회
         for addr, group in grouped:
-            if not addr.strip(): continue # 주소 없는 경우 건너뛰거나 별도 처리
+            if not addr.strip(): continue 
             
-            # --- 가족 블록 시작 ---
-            pdf.set_draw_color(200, 200, 200) # 회색 라인
-            pdf.line(10, pdf.get_y(), 200, pdf.get_y()) # 구분선
+            pdf.set_draw_color(200, 200, 200) 
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y()) 
             pdf.ln(2)
             
             start_y = pdf.get_y()
             
-            # 레이아웃: 왼쪽(사진) / 오른쪽(텍스트)
-            # 그룹 내 첫 번째 사람의 사진을 대표 사진으로 사용하거나, 
-            # 개별 사진을 나열할 수 있음. 요청하신 캡처는 '가족 사진' 1장이지만, 
-            # DB 구조상 '개인 사진'이므로, 가장 먼저 나오는 분 사진을 왼쪽에 배치합니다.
-            
-            # 1. 왼쪽: 사진 영역 (대표 1인 또는 가족 사진이 있다면 그것)
-            # 여기서는 그룹의 첫 번째 사람 사진을 사용합니다.
             photo_width = 35
             photo_height = 35
             photo_x = 10
             
-            rep_member = group.iloc[0] # 대표자
+            rep_member = group.iloc[0] 
             has_photo = False
             
             if str(rep_member['사진']).startswith("data:image"):
@@ -299,90 +289,5 @@ elif menu == "PDF 주소록 생성":
                 except:
                     pass
             
-            # 사진이 없으면 빈 박스 혹은 공간 유지
-            if not has_photo:
-                # pdf.rect(photo_x, start_y, photo_width, photo_height) # 빈 박스 필요시 주석 해제
-                pass
-
-            # 2. 오른쪽: 텍스트 영역
             text_x = photo_x + photo_width + 5
             pdf.set_xy(text_x, start_y)
-            
-            # (1) 이름 및 직분 (굵게)
-            # 같은 주소의 모든 이름을 나열 (예: 김세령, 오세호)
-            names = []
-            for _, mem in group.iterrows():
-                name_str = mem['이름']
-                if "직분" in sel_infos and mem['직분']:
-                    # 직분은 이름 옆에 작게 붙이거나 이름만 나열
-                    pass 
-                names.append(name_str)
-            
-            # 이름 줄 생성
-            pdf.set_font("Nanum", "", 14) # 굵게(Bold)는 폰트 파일 필요하므로 크기로 조절
-            full_name_str = ", ".join(names)
-            
-            # 직분 표시 (대표자 직분 또는 가장 높은 직분 등 로직 필요, 여기선 대표자 직분 표시)
-            role_str = ""
-            if "직분" in sel_infos:
-                # 그룹 내 직분들을 모아서 보여줄 수도 있음
-                roles = [m['직분'] for _, m in group.iterrows() if m['직분']]
-                role_str = " ".join(list(set(roles))) # 중복 제거
-            
-            # 이름 출력
-            pdf.cell(100, 8, full_name_str, ln=0)
-            # 직분 우측 정렬 느낌으로 출력 (좌표 조정)
-            pdf.set_font("Nanum", "", 11)
-            pdf.cell(0, 8, role_str, ln=1, align='R')
-            
-            # 현재 Y 좌표 저장 (이름 줄 다음)
-            current_text_y = pdf.get_y()
-            pdf.set_xy(text_x, current_text_y)
-            
-            pdf.set_font("Nanum", "", 10)
-            
-            # (2) 자녀/가족 관계
-            if "자녀/가족" in sel_infos:
-                # 가족 컬럼 내용을 합침
-                families = [m['가족'] for _, m in group.iterrows() if m['가족'].strip()]
-                if families:
-                    family_str = ", ".join(list(set(families))) # 중복 내용 제거
-                    pdf.cell(0, 6, f"{family_str}", ln=1)
-                    pdf.set_x(text_x)
-
-            # (3) 전화번호 (여러 명일 경우 각각 표시)
-            if "전화번호" in sel_infos:
-                phones = []
-                for _, mem in group.iterrows():
-                    if mem['전화번호'].strip():
-                        phones.append(f"{mem['이름'][0]} {mem['전화번호']}") # 성+번호 로 간략화
-                if phones:
-                    pdf.cell(0, 6, " / ".join(phones), ln=1)
-                    pdf.set_x(text_x)
-
-            # (4) 주소 (필수)
-            pdf.cell(0, 6, f"{addr}", ln=1)
-            pdf.set_x(text_x)
-
-            # (5) 생년월일 (선택 시)
-            if "생년월일" in sel_infos:
-                 births = []
-                 for _, mem in group.iterrows():
-                     births.append(f"{mem['이름']}:{mem['생년월일']}")
-                 if births:
-                     pdf.cell(0, 6, " ".join(births), ln=1)
-                     pdf.set_x(text_x)
-
-            # (6) 이메일
-            if "이메일" in sel_infos:
-                emails = [m['이메일'] for _, m in group.iterrows() if m['이메일'].strip()]
-                if emails:
-                    pdf.cell(0, 6, ", ".join(emails), ln=1)
-
-            # 다음 그룹을 위해 Y좌표 이동 (사진 높이와 텍스트 높이 중 큰 것 기준)
-            end_y = pdf.get_y()
-            block_height = max(photo_height, end_y - start_y)
-            pdf.set_y(start_y + block_height + 5) # 여백 5
-            
-        st.success("PDF 생성이 완료되었습니다!")
-        st.download_button("📥 주소록 PDF 다운로드", data=bytes(pdf.output()), file_name=f"교적부_{date.today()}.pdf")
