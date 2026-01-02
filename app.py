@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.12")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.13")
 
 @st.cache_resource
 def get_font():
@@ -46,6 +46,16 @@ def get_sheet():
         st.error(f"구글 시트 연결 오류: {e}")
         return None
 
+# [중요] 데이터를 저장하는 함수를 미리 정의 (load_data에서 쓰기 위함)
+def save_df_to_sheet(sheet, df):
+    try:
+        save_df = df.copy()
+        save_df = save_df.fillna(" ")
+        sheet.clear()
+        sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
+    except Exception as e:
+        st.error(f"데이터 저장 중 오류 발생: {e}")
+
 def load_data():
     sheet = get_sheet()
     if not sheet: return pd.DataFrame()
@@ -67,27 +77,36 @@ def load_data():
     else:
          df = pd.DataFrame(data, columns=header)
 
-    # 데이터 정리 (결측치 제거 및 문자열 변환)
+    # 데이터 정리
     df = df.astype(str).replace(['nan', 'None', 'NaT', 'NaN', 'null', ''], ' ')
     
-    # ID가 없으면 생성, 있으면 공백 제거하여 확실히 문자열로 만듦
+    # --- [핵심 수정 구간] ID 영구 고정 로직 ---
     if 'id' not in df.columns:
-        df['id'] = [str(uuid.uuid4()) for _ in range(len(df))]
-    else:
-        df['id'] = df.apply(lambda x: str(uuid.uuid4()) if x['id'].strip() == '' else str(x['id']).strip(), axis=1)
-        
+        df['id'] = '' # ID 컬럼이 없으면 만듦
+
+    ids_updated = False
+    
+    # 한 명씩 검사해서 ID가 없으면 새로 발급
+    for idx, row in df.iterrows():
+        curr_id = str(row.get('id', '')).strip()
+        if not curr_id: # ID가 비어있다면
+            df.at[idx, 'id'] = str(uuid.uuid4()) # 새 ID 부여
+            ids_updated = True # "아, 저장해야겠다"라고 표시
+        else:
+            df.at[idx, 'id'] = curr_id # 공백 정리만
+            
+    # 새로 발급된 ID가 하나라도 있으면 엑셀(구글시트)에 바로 저장해버림 (영구 보존)
+    if ids_updated:
+        save_df_to_sheet(sheet, df)
+        # (옵션) 화면에 잠깐 알림
+        # st.toast("시스템: 데이터 안정화를 위해 성도님들의 고유 ID를 업데이트했습니다.")
+
     return df
 
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
-        save_df = df.copy()
-        save_df = save_df.fillna(" ")
-        try:
-            sheet.clear()
-            sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
-        except Exception as e:
-            st.error(f"데이터 저장 중 오류 발생: {e}")
+        save_df_to_sheet(sheet, df)
 
 def image_to_base64(img):
     buffered = io.BytesIO()
@@ -98,11 +117,11 @@ def image_to_base64(img):
 # --- 2. 상세 정보 수정 팝업 ---
 @st.dialog("성도 상세 정보 수정")
 def edit_member_dialog(member_id, full_df):
-    # ID 매칭을 강력하게 (문자열 vs 문자열)
+    # ID 매칭
     row = full_df[full_df['id'] == str(member_id)]
     
     if row.empty:
-        st.error(f"데이터 매칭 실패 (ID: {member_id})")
+        st.error(f"데이터 매칭 실패 (ID: {member_id})\n새로고침 후 다시 시도해주세요.")
         return
         
     m_info = row.iloc[0]
@@ -162,11 +181,11 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.12")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.13")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
-    # 데이터 로드 (캐시 사용 없이 매번 확실하게 로드하여 싱크 맞춤)
+    # 1. 데이터 로드 (이제 이 시점에 ID가 구글시트에 확실히 박제됨)
     df = load_data()
     
     if not df.empty:
@@ -192,30 +211,27 @@ if menu == "성도 관리":
         
         gb.configure_column("id", hide=True)
         gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=60)
-        
-        # 이름 옆에 체크박스 배치
         gb.configure_column("이름", width=120, checkboxSelection=True, headerCheckboxSelection=False)
-        
         gb.configure_column("직분", width=80)
         gb.configure_column("전화번호", width=140)
         gb.configure_column("주소", width=200)
         gb.configure_column("상태", width=90)
         
-        # [핵심] 클릭하자마자 반응하도록 설정
+        # Selection 설정 (클릭 즉시 반영)
         gb.configure_selection(
             selection_mode='single', 
             use_checkbox=True,
-            pre_selected_rows=[] # 항상 초기화하여 재선택 가능하게 함
+            pre_selected_rows=[]
         )
         
         grid_opts = gb.build()
         grid_opts['rowHeight'] = 50 
 
-        # 표 그리기
+        # AgGrid
         response = AgGrid(
             f_df, 
             gridOptions=grid_opts, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED, # 체크박스 누르면 즉시 실행
+            update_mode=GridUpdateMode.SELECTION_CHANGED, 
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             allow_unsafe_jscode=True, 
             theme='balham',
@@ -224,13 +240,11 @@ if menu == "성도 관리":
             key='main_grid'
         )
 
-        # [즉시 실행 로직]
         selected_rows = response.get('selected_rows')
         
+        # 선택 감지 및 팝업 실행
         if selected_rows is not None and len(selected_rows) > 0:
-            # 리스트와 데이터프레임 두 가지 경우를 모두 대비 (안전 장치)
             target_id = None
-            
             if isinstance(selected_rows, pd.DataFrame):
                 if not selected_rows.empty:
                     target_id = selected_rows.iloc[0]['id']
@@ -238,9 +252,8 @@ if menu == "성도 관리":
                 if len(selected_rows) > 0:
                     target_id = selected_rows[0].get('id')
             
-            # ID를 찾았으면 바로 팝업 실행
             if target_id:
-                # 여기서 df를 그대로 넘겨서 데이터 매칭 오류 방지
+                # 여기서 넘겨주는 df는 load_data()를 통해 ID가 고정된 df이므로 안전함
                 edit_member_dialog(str(target_id), df)
 
 elif menu == "신규 등록":
