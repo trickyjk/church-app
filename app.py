@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.4")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.5")
 
 @st.cache_resource
 def get_font():
@@ -150,7 +150,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.4")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.5")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -159,36 +159,48 @@ if menu == "성도 관리":
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
 
+        # [수정] 자바스크립트 코드 개선: 이미지가 확실히 렌더링되도록 수정
         thumbnail_js = JsCode("""
         function(params) {
-            if (params.value && params.value.includes('base64')) {
-                return '<img src="' + params.value + '" style="width:40px;height:40px;border-radius:50%;">';
-            } return ' ';
+            if (params.value && params.value.startsWith('data:image')) {
+                return '<img src="' + params.value + '" style="width:40px;height:40px;border-radius:50%; object-fit: cover;">';
+            } 
+            return '<span style="color:#ddd;">No Image</span>';
         }
         """)
 
-        # [수정] Grid 옵션 설정
+        # Grid 옵션 설정
         gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
         
-        # [수정 완료] 에러를 유발하던 headerCheckboxSelection 옵션 제거
-        gb.configure_selection(selection_mode='single', use_checkbox=True)
+        # [수정] 체크박스와 선택 모드를 가장 먼저 설정 (순서 중요)
+        gb.configure_selection(
+            selection_mode='single', 
+            use_checkbox=True,
+            pre_selected_rows=[]
+        )
         
+        # 컬럼별 상세 설정
         gb.configure_column("id", hide=True)
-        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_js, width=70)
-        
-        # 이름 컬럼 고정(pinned) 해제 -> 체크박스 가림 현상 방지
-        gb.configure_column("이름", width=100) 
-        gb.configure_column("상태", width=90)
+        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_js, width=80)
+        gb.configure_column("이름", width=120) 
+        gb.configure_column("직분", width=80)
+        gb.configure_column("전화번호", width=150)
+        gb.configure_column("주소", width=200)
+        gb.configure_column("상태", width=100)
         
         grid_opts = gb.build()
-        grid_opts['rowHeight'] = 50
+        grid_opts['rowHeight'] = 50 # 이미지 높이에 맞춰 행 높이 설정
 
-        responses = AgGrid(f_df, gridOptions=grid_opts, 
-                           update_mode=GridUpdateMode.SELECTION_CHANGED,
-                           data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                           allow_unsafe_jscode=True,
-                           theme='balham',
-                           fit_columns_on_grid_load=True)
+        # [중요] allow_unsafe_jscode=True 필수
+        responses = AgGrid(
+            f_df, 
+            gridOptions=grid_opts, 
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            allow_unsafe_jscode=True, # 이 옵션이 켜져 있어야 이미지가 보입니다
+            theme='balham',
+            fit_columns_on_grid_load=False # 컬럼 너비 강제 조정 해제
+        )
 
         selected = responses.get('selected_rows')
         
