@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.7")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.8")
 
 @st.cache_resource
 def get_font():
@@ -80,7 +80,11 @@ def load_data():
 def save_to_google(df):
     sheet = get_sheet()
     if sheet:
+        # 저장 전 '관리' 같은 임시 컬럼은 제외
         save_df = df.copy()
+        if '관리' in save_df.columns:
+            save_df = save_df.drop(columns=['관리'])
+            
         save_df = save_df.fillna(" ")
         try:
             sheet.clear()
@@ -90,7 +94,6 @@ def save_to_google(df):
 
 def image_to_base64(img):
     buffered = io.BytesIO()
-    # 이미지를 저장할 때 용량을 줄이기 위해 품질을 70으로 낮추고 사이즈를 줄임 (구글 시트 용량 문제 방지)
     img = img.resize((150, 150)) 
     img.save(buffered, format="JPEG", quality=70)
     return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
@@ -162,7 +165,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.7")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.8")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -171,7 +174,10 @@ if menu == "성도 관리":
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
 
-        # [수정 1] 이미지 렌더링 방식 변경 (Class 방식 사용 - 더 안정적임)
+        # [버튼용 데이터 추가] 화면 표시용 가짜 컬럼 생성
+        f_df['관리'] = '수정' 
+
+        # 1. 이미지 렌더링 JS
         thumbnail_renderer = JsCode("""
             class ThumbnailRenderer {
                 init(params) {
@@ -186,17 +192,36 @@ if menu == "성도 관리":
                         this.eGui.innerHTML = '<span style="color:#ddd; font-size:10px;">No Img</span>';
                     }
                 }
-                getGui() {
-                    return this.eGui;
+                getGui() { return this.eGui; }
+            }
+        """)
+
+        # 2. [신규 기능] 수정 버튼 렌더링 JS (초록색 버튼 스타일)
+        btn_renderer = JsCode("""
+            class BtnRenderer {
+                init(params) {
+                    this.eGui = document.createElement('div');
+                    this.eGui.innerHTML = `
+                    <span style="
+                        background-color: #2E86C1; 
+                        color: white; 
+                        padding: 5px 10px; 
+                        border-radius: 5px; 
+                        font-size: 12px; 
+                        font-weight: bold;
+                        cursor: pointer;
+                        display: block;
+                        text-align: center;
+                    ">✏️ 수정</span>`;
                 }
+                getGui() { return this.eGui; }
             }
         """)
 
         # Grid 옵션 설정
-        gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
+        gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태", "관리"]])
         
-        # [수정 2] 체크박스 설정 위치 및 방법 변경
-        # ID는 숨기지만, 체크박스 기능은 명확히 활성화
+        # 컬럼 설정
         gb.configure_column("id", hide=True)
         gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=70)
         gb.configure_column("이름", width=100) 
@@ -205,12 +230,14 @@ if menu == "성도 관리":
         gb.configure_column("주소", width=200)
         gb.configure_column("상태", width=90)
         
-        # 선택 모드 설정 (체크박스를 강제로 켭니다)
+        # [핵심] 관리(수정) 버튼 컬럼 설정
+        gb.configure_column("관리", headerName="관리", cellRenderer=btn_renderer, width=80, pinned='right')
+        
+        # 선택 모드: 버튼(셀)을 클릭해도 행이 선택되도록 설정
         gb.configure_selection(
             selection_mode='single', 
-            use_checkbox=True,   # 체크박스 사용
-            pre_selected_rows=[],
-            header_checkbox=False # 헤더 체크박스 끄기 (단일 선택이므로)
+            use_checkbox=False,   # 체크박스 제거
+            pre_selected_rows=[]
         )
         
         grid_opts = gb.build()
@@ -224,12 +251,11 @@ if menu == "성도 관리":
             allow_unsafe_jscode=True, 
             theme='balham',
             fit_columns_on_grid_load=False,
-            height=600 # 표 높이 고정
+            height=600
         )
 
         selected = responses.get('selected_rows')
         
-        # 선택된 행이 있으면 팝업 띄우기
         if selected is not None:
             selected_id = None
             if isinstance(selected, list) and len(selected) > 0:
@@ -237,6 +263,7 @@ if menu == "성도 관리":
             elif isinstance(selected, pd.DataFrame) and not selected.empty:
                 selected_id = selected.iloc[0]['id']
             
+            # 팝업 띄우기
             if selected_id:
                 edit_member_dialog(str(selected_id), df)
 
