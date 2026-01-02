@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.5")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.6")
 
 @st.cache_resource
 def get_font():
@@ -51,11 +51,26 @@ def load_data():
     sheet = get_sheet()
     if not sheet: return pd.DataFrame()
     
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
-    
-    if df.empty:
+    # [수정 핵심] get_all_records() 대신 get_all_values() 사용
+    # 이유: 헤더 중복이나 빈 셀이 있어도 에러 없이 가져오기 위함
+    try:
+        rows = sheet.get_all_values()
+    except Exception as e:
+        st.error(f"데이터 읽기 실패: {e}")
+        return pd.DataFrame()
+
+    if not rows:
         return pd.DataFrame(columns=["id", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "가족", "상태", "사진"])
+
+    # 첫 번째 줄을 헤더로, 나머지를 데이터로 변환
+    header = rows[0]
+    data = rows[1:]
+    
+    # 데이터프레임 생성 (데이터가 없을 경우 처리)
+    if not data:
+         df = pd.DataFrame(columns=header)
+    else:
+         df = pd.DataFrame(data, columns=header)
 
     # 결측치 처리
     df = df.astype(str).replace(['nan', 'None', 'NaT', 'NaN', 'null', ''], ' ')
@@ -150,7 +165,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.5")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.6")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -159,7 +174,7 @@ if menu == "성도 관리":
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
 
-        # [수정] 자바스크립트 코드 개선: 이미지가 확실히 렌더링되도록 수정
+        # 자바스크립트 코드 개선: 이미지 렌더링
         thumbnail_js = JsCode("""
         function(params) {
             if (params.value && params.value.startsWith('data:image')) {
@@ -172,7 +187,7 @@ if menu == "성도 관리":
         # Grid 옵션 설정
         gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
         
-        # [수정] 체크박스와 선택 모드를 가장 먼저 설정 (순서 중요)
+        # [수정] 체크박스와 선택 모드 설정
         gb.configure_selection(
             selection_mode='single', 
             use_checkbox=True,
@@ -189,17 +204,16 @@ if menu == "성도 관리":
         gb.configure_column("상태", width=100)
         
         grid_opts = gb.build()
-        grid_opts['rowHeight'] = 50 # 이미지 높이에 맞춰 행 높이 설정
+        grid_opts['rowHeight'] = 50 
 
-        # [중요] allow_unsafe_jscode=True 필수
         responses = AgGrid(
             f_df, 
             gridOptions=grid_opts, 
             update_mode=GridUpdateMode.SELECTION_CHANGED,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            allow_unsafe_jscode=True, # 이 옵션이 켜져 있어야 이미지가 보입니다
+            allow_unsafe_jscode=True, 
             theme='balham',
-            fit_columns_on_grid_load=False # 컬럼 너비 강제 조정 해제
+            fit_columns_on_grid_load=False 
         )
 
         selected = responses.get('selected_rows')
