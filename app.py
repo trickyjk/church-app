@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.11")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.12")
 
 @st.cache_resource
 def get_font():
@@ -67,12 +67,14 @@ def load_data():
     else:
          df = pd.DataFrame(data, columns=header)
 
+    # 데이터 정리 (결측치 제거 및 문자열 변환)
     df = df.astype(str).replace(['nan', 'None', 'NaT', 'NaN', 'null', ''], ' ')
     
+    # ID가 없으면 생성, 있으면 공백 제거하여 확실히 문자열로 만듦
     if 'id' not in df.columns:
         df['id'] = [str(uuid.uuid4()) for _ in range(len(df))]
     else:
-        df['id'] = df.apply(lambda x: str(uuid.uuid4()) if x['id'].strip() == '' else x['id'], axis=1)
+        df['id'] = df.apply(lambda x: str(uuid.uuid4()) if x['id'].strip() == '' else str(x['id']).strip(), axis=1)
         
     return df
 
@@ -96,10 +98,11 @@ def image_to_base64(img):
 # --- 2. 상세 정보 수정 팝업 ---
 @st.dialog("성도 상세 정보 수정")
 def edit_member_dialog(member_id, full_df):
-    # 데이터 조회
-    row = full_df[full_df['id'] == member_id]
+    # ID 매칭을 강력하게 (문자열 vs 문자열)
+    row = full_df[full_df['id'] == str(member_id)]
+    
     if row.empty:
-        st.error("데이터를 찾을 수 없습니다.")
+        st.error(f"데이터 매칭 실패 (ID: {member_id})")
         return
         
     m_info = row.iloc[0]
@@ -159,11 +162,13 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.11")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.12")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
+    # 데이터 로드 (캐시 사용 없이 매번 확실하게 로드하여 싱크 맞춤)
     df = load_data()
+    
     if not df.empty:
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
@@ -188,7 +193,7 @@ if menu == "성도 관리":
         gb.configure_column("id", hide=True)
         gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=60)
         
-        # [핵심 수정] 체크박스를 '이름' 컬럼에 강제로 붙임
+        # 이름 옆에 체크박스 배치
         gb.configure_column("이름", width=120, checkboxSelection=True, headerCheckboxSelection=False)
         
         gb.configure_column("직분", width=80)
@@ -196,52 +201,47 @@ if menu == "성도 관리":
         gb.configure_column("주소", width=200)
         gb.configure_column("상태", width=90)
         
-        # Selection 설정
+        # [핵심] 클릭하자마자 반응하도록 설정
         gb.configure_selection(
             selection_mode='single', 
-            use_checkbox=True,      # 체크박스 사용
-            pre_selected_rows=[]
+            use_checkbox=True,
+            pre_selected_rows=[] # 항상 초기화하여 재선택 가능하게 함
         )
         
         grid_opts = gb.build()
         grid_opts['rowHeight'] = 50 
 
-        # AgGrid (key를 설정하여 새로고침 방지)
+        # 표 그리기
         response = AgGrid(
             f_df, 
             gridOptions=grid_opts, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED, # 선택 시 즉시 업데이트
+            update_mode=GridUpdateMode.SELECTION_CHANGED, # 체크박스 누르면 즉시 실행
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             allow_unsafe_jscode=True, 
             theme='balham',
             fit_columns_on_grid_load=False,
-            height=500,
-            key='main_grid' # 중요: 키 설정
+            height=600,
+            key='main_grid'
         )
 
+        # [즉시 실행 로직]
         selected_rows = response.get('selected_rows')
         
-        # [디버깅 & 실행 영역]
-        # 선택된 사람이 있으면 아래 코드가 실행됩니다.
         if selected_rows is not None and len(selected_rows) > 0:
-            # 리스트인지 데이터프레임인지 확인 후 처리
+            # 리스트와 데이터프레임 두 가지 경우를 모두 대비 (안전 장치)
+            target_id = None
+            
             if isinstance(selected_rows, pd.DataFrame):
-                sel_name = selected_rows.iloc[0]['이름']
-                sel_id = selected_rows.iloc[0]['id']
-            else: # 리스트인 경우
-                sel_name = selected_rows[0].get('이름')
-                sel_id = selected_rows[0].get('id')
+                if not selected_rows.empty:
+                    target_id = selected_rows.iloc[0]['id']
+            elif isinstance(selected_rows, list):
+                if len(selected_rows) > 0:
+                    target_id = selected_rows[0].get('id')
             
-            # 1. 진단 메세지 표시 (제대로 클릭됐는지 확인용)
-            st.info(f"✅ 시스템 인식 성공: **'{sel_name}'** 성도님이 선택되었습니다.")
-            
-            # 2. 팝업 띄우기 버튼 (자동 팝업보다 100배 안정적임)
-            if st.button(f"🛠️ {sel_name} 성도님 정보 수정하기", type="primary", use_container_width=True):
-                edit_member_dialog(sel_id, df)
-        
-        else:
-            # 선택 안 됐을 때 안내
-            st.write("👆 목록에서 성도님 이름 옆의 체크박스를 클릭해주세요.")
+            # ID를 찾았으면 바로 팝업 실행
+            if target_id:
+                # 여기서 df를 그대로 넘겨서 데이터 매칭 오류 방지
+                edit_member_dialog(str(target_id), df)
 
 elif menu == "신규 등록":
     st.header("📝 새 성도님 등록")
