@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.6")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.7")
 
 @st.cache_resource
 def get_font():
@@ -51,8 +51,6 @@ def load_data():
     sheet = get_sheet()
     if not sheet: return pd.DataFrame()
     
-    # [수정 핵심] get_all_records() 대신 get_all_values() 사용
-    # 이유: 헤더 중복이나 빈 셀이 있어도 에러 없이 가져오기 위함
     try:
         rows = sheet.get_all_values()
     except Exception as e:
@@ -62,20 +60,16 @@ def load_data():
     if not rows:
         return pd.DataFrame(columns=["id", "이름", "직분", "생년월일", "전화번호", "이메일", "주소", "가족", "상태", "사진"])
 
-    # 첫 번째 줄을 헤더로, 나머지를 데이터로 변환
     header = rows[0]
     data = rows[1:]
     
-    # 데이터프레임 생성 (데이터가 없을 경우 처리)
     if not data:
          df = pd.DataFrame(columns=header)
     else:
          df = pd.DataFrame(data, columns=header)
 
-    # 결측치 처리
     df = df.astype(str).replace(['nan', 'None', 'NaT', 'NaN', 'null', ''], ' ')
     
-    # 고유 ID(UUID) 관리
     if 'id' not in df.columns:
         df['id'] = [str(uuid.uuid4()) for _ in range(len(df))]
     else:
@@ -96,7 +90,9 @@ def save_to_google(df):
 
 def image_to_base64(img):
     buffered = io.BytesIO()
-    img.save(buffered, format="JPEG")
+    # 이미지를 저장할 때 용량을 줄이기 위해 품질을 70으로 낮추고 사이즈를 줄임 (구글 시트 용량 문제 방지)
+    img = img.resize((150, 150)) 
+    img.save(buffered, format="JPEG", quality=70)
     return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
 
 # --- 2. 상세 정보 수정 팝업 ---
@@ -146,6 +142,7 @@ def edit_member_dialog(member_id, full_df):
                 st.success("정보가 업데이트되었습니다."); st.rerun()
 
     with tab2:
+        st.info("💡 팁: 사진을 업로드하면 자동으로 작게 변환되어 저장됩니다.")
         img_file = st.file_uploader("새 사진 업로드", type=['jpg', 'jpeg', 'png'])
         if img_file:
             if 'rot' not in st.session_state: st.session_state.rot = 0
@@ -165,7 +162,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.6")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.7")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -174,34 +171,47 @@ if menu == "성도 관리":
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
 
-        # 자바스크립트 코드 개선: 이미지 렌더링
-        thumbnail_js = JsCode("""
-        function(params) {
-            if (params.value && params.value.startsWith('data:image')) {
-                return '<img src="' + params.value + '" style="width:40px;height:40px;border-radius:50%; object-fit: cover;">';
-            } 
-            return '<span style="color:#ddd;">No Image</span>';
-        }
+        # [수정 1] 이미지 렌더링 방식 변경 (Class 방식 사용 - 더 안정적임)
+        thumbnail_renderer = JsCode("""
+            class ThumbnailRenderer {
+                init(params) {
+                    this.eGui = document.createElement('span');
+                    this.eGui.style.display = 'flex';
+                    this.eGui.style.alignItems = 'center';
+                    this.eGui.style.justifyContent = 'center';
+                    
+                    if (params.value && params.value.startsWith('data:image')) {
+                        this.eGui.innerHTML = '<img src="' + params.value + '" style="width:40px;height:40px;border-radius:50%; object-fit: cover;" />';
+                    } else {
+                        this.eGui.innerHTML = '<span style="color:#ddd; font-size:10px;">No Img</span>';
+                    }
+                }
+                getGui() {
+                    return this.eGui;
+                }
+            }
         """)
 
         # Grid 옵션 설정
         gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
         
-        # [수정] 체크박스와 선택 모드 설정
+        # [수정 2] 체크박스 설정 위치 및 방법 변경
+        # ID는 숨기지만, 체크박스 기능은 명확히 활성화
+        gb.configure_column("id", hide=True)
+        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=70)
+        gb.configure_column("이름", width=100) 
+        gb.configure_column("직분", width=80)
+        gb.configure_column("전화번호", width=140)
+        gb.configure_column("주소", width=200)
+        gb.configure_column("상태", width=90)
+        
+        # 선택 모드 설정 (체크박스를 강제로 켭니다)
         gb.configure_selection(
             selection_mode='single', 
-            use_checkbox=True,
-            pre_selected_rows=[]
+            use_checkbox=True,   # 체크박스 사용
+            pre_selected_rows=[],
+            header_checkbox=False # 헤더 체크박스 끄기 (단일 선택이므로)
         )
-        
-        # 컬럼별 상세 설정
-        gb.configure_column("id", hide=True)
-        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_js, width=80)
-        gb.configure_column("이름", width=120) 
-        gb.configure_column("직분", width=80)
-        gb.configure_column("전화번호", width=150)
-        gb.configure_column("주소", width=200)
-        gb.configure_column("상태", width=100)
         
         grid_opts = gb.build()
         grid_opts['rowHeight'] = 50 
@@ -213,11 +223,13 @@ if menu == "성도 관리":
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             allow_unsafe_jscode=True, 
             theme='balham',
-            fit_columns_on_grid_load=False 
+            fit_columns_on_grid_load=False,
+            height=600 # 표 높이 고정
         )
 
         selected = responses.get('selected_rows')
         
+        # 선택된 행이 있으면 팝업 띄우기
         if selected is not None:
             selected_id = None
             if isinstance(selected, list) and len(selected) > 0:
