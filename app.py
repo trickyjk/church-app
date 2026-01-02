@@ -18,7 +18,7 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.9")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.10")
 
 @st.cache_resource
 def get_font():
@@ -100,7 +100,6 @@ def image_to_base64(img):
 # --- 2. 상세 정보 수정 팝업 ---
 @st.dialog("성도 상세 정보")
 def edit_member_dialog(member_id, full_df):
-    # 선택된 ID로 데이터 찾기
     row = full_df[full_df['id'] == member_id]
     if row.empty:
         st.error("해당 성도 정보를 찾을 수 없습니다.")
@@ -165,7 +164,7 @@ def edit_member_dialog(member_id, full_df):
                 st.error(f"이미지 처리 중 오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.9")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.10")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -196,7 +195,7 @@ if menu == "성도 관리":
             }
         """)
 
-        # 2. [핵심 수정] 버튼 클릭이 표에 전달되도록 CSS 수정 (pointer-events: none)
+        # 2. 버튼 렌더링 (단순 시각적 효과)
         btn_renderer = JsCode("""
             class BtnRenderer {
                 init(params) {
@@ -210,12 +209,11 @@ if menu == "성도 관리":
                         font-size: 12px; 
                         font-weight: bold;
                         text-align: center;
-                        pointer-events: none;  /* 중요: 클릭 이벤트를 뒤로 통과시킴 */
+                        pointer-events: none;
                     ">✏️ 수정</div>`;
                     this.eGui.style.display = 'flex';
                     this.eGui.style.justifyContent = 'center';
                     this.eGui.style.alignItems = 'center';
-                    this.eGui.style.cursor = 'pointer';
                 }
                 getGui() { return this.eGui; }
             }
@@ -232,11 +230,11 @@ if menu == "성도 관리":
         gb.configure_column("상태", width=90)
         gb.configure_column("관리", headerName="관리", cellRenderer=btn_renderer, width=80, pinned='right')
         
-        # [설정] 클릭 시 즉시 반응하도록 설정
+        # 선택 모드 설정
         gb.configure_selection(
             selection_mode='single', 
             use_checkbox=False,   
-            pre_selected_rows=[] # 항상 초기화하여 재클릭 가능하게 함
+            pre_selected_rows=[]
         )
         
         grid_opts = gb.build()
@@ -246,26 +244,38 @@ if menu == "성도 관리":
         responses = AgGrid(
             f_df, 
             gridOptions=grid_opts, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED, # 선택 변경 시 즉시 실행
+            update_mode=GridUpdateMode.SELECTION_CHANGED, 
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             allow_unsafe_jscode=True, 
             theme='balham',
             fit_columns_on_grid_load=False,
-            height=600
+            height=500
         )
 
         selected = responses.get('selected_rows')
         
-        # 선택된 데이터 처리
+        # --- [변경 핵심] 선택된 데이터가 있으면 아래에 별도 버튼 생성 ---
         if selected is not None:
             selected_id = None
+            selected_name = ""
+            
             if isinstance(selected, list) and len(selected) > 0:
                 selected_id = selected[0].get('id')
+                selected_name = selected[0].get('이름')
             elif isinstance(selected, pd.DataFrame) and not selected.empty:
                 selected_id = selected.iloc[0]['id']
+                selected_name = selected.iloc[0]['이름']
             
+            # 선택된 사람이 있을 때만 아래 영역이 나타납니다.
             if selected_id:
-                edit_member_dialog(str(selected_id), df)
+                st.divider() # 구분선
+                col_msg, col_btn = st.columns([3, 1])
+                with col_msg:
+                    st.info(f"👉 **{selected_name}** 성도님이 선택되었습니다.")
+                with col_btn:
+                    # 이 버튼을 눌러야 비로소 팝업이 뜹니다. (가장 안전한 방법)
+                    if st.button("🛠️ 선택된 정보 수정하기", use_container_width=True, type="primary"):
+                        edit_member_dialog(str(selected_id), df)
 
 elif menu == "신규 등록":
     st.header("📝 새 성도님 등록")
