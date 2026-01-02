@@ -18,11 +18,10 @@ SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 SECRET_FILE = 'secrets.json' 
 SHEET_NAME = '교적부_데이터'
 
-st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.10")
+st.set_page_config(layout="wide", page_title="킹스턴한인교회 교적부 v14.11")
 
 @st.cache_resource
 def get_font():
-    """PDF 생성용 한글 폰트(나눔고딕) 다운로드 및 캐싱"""
     font_path = "NanumGothic.ttf"
     if not os.path.exists(font_path):
         f_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
@@ -81,9 +80,6 @@ def save_to_google(df):
     sheet = get_sheet()
     if sheet:
         save_df = df.copy()
-        if '관리' in save_df.columns:
-            save_df = save_df.drop(columns=['관리'])
-            
         save_df = save_df.fillna(" ")
         try:
             sheet.clear()
@@ -98,11 +94,12 @@ def image_to_base64(img):
     return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
 
 # --- 2. 상세 정보 수정 팝업 ---
-@st.dialog("성도 상세 정보")
+@st.dialog("성도 상세 정보 수정")
 def edit_member_dialog(member_id, full_df):
+    # 데이터 조회
     row = full_df[full_df['id'] == member_id]
     if row.empty:
-        st.error("해당 성도 정보를 찾을 수 없습니다.")
+        st.error("데이터를 찾을 수 없습니다.")
         return
         
     m_info = row.iloc[0]
@@ -126,12 +123,12 @@ def edit_member_dialog(member_id, full_df):
                 u_email = st.text_input("이메일", value=str(m_info['이메일']))
                 u_addr = st.text_input("주소", value=str(m_info['주소']))
             
-            u_family = st.text_area("가족 관계 (자녀 등)", value=str(m_info['가족']))
+            u_family = st.text_area("가족 관계", value=str(m_info['가족']))
             status_opts = ["출석 중", "장기결석", "타지역", "방문", "기타"]
             u_status = st.selectbox("상태", status_opts, 
                                   index=status_opts.index(m_info['상태']) if m_info['상태'] in status_opts else 0)
             
-            if st.form_submit_button("✅ 수정 내용 저장"):
+            if st.form_submit_button("✅ 저장하기"):
                 full_df.at[idx, '이름'] = u_name
                 full_df.at[idx, '직분'] = u_role
                 full_df.at[idx, '생년월일'] = u_birth.strftime('%Y-%m-%d')
@@ -141,30 +138,28 @@ def edit_member_dialog(member_id, full_df):
                 full_df.at[idx, '가족'] = u_family
                 full_df.at[idx, '상태'] = u_status
                 save_to_google(full_df)
-                st.success("정보가 업데이트되었습니다."); st.rerun()
+                st.success("저장 완료!"); st.rerun()
 
     with tab2:
-        st.info("💡 팁: 사진을 업로드하면 자동으로 작게 변환되어 저장됩니다.")
-        img_file = st.file_uploader("새 사진 업로드", type=['jpg', 'jpeg', 'png'])
+        img_file = st.file_uploader("사진 업로드", type=['jpg', 'jpeg', 'png'])
         if img_file:
             if 'rot' not in st.session_state: st.session_state.rot = 0
-            rc1, rc2 = st.columns(2)
-            if rc1.button("🔄 왼쪽 90도"): st.session_state.rot += 90
-            if rc2.button("🔄 오른쪽 90도"): st.session_state.rot -= 90
+            c1, c2 = st.columns(2)
+            if c1.button("🔄 회전"): st.session_state.rot -= 90
             
             try:
                 img = Image.open(img_file).rotate(st.session_state.rot, expand=True)
                 cropped = st_cropper(img, aspect_ratio=(1, 1))
-                if st.button("📸 이 사진으로 확정 저장"):
+                if st.button("📸 사진 저장"):
                     full_df.at[idx, '사진'] = image_to_base64(cropped)
                     save_to_google(full_df)
                     st.session_state.rot = 0
                     st.success("사진 저장 완료!"); st.rerun()
             except Exception as e:
-                st.error(f"이미지 처리 중 오류: {e}")
+                st.error(f"오류: {e}")
 
 # --- 3. 메인 화면 ---
-st.title("⛪ 킹스턴한인교회 통합 교적부 v14.10")
+st.title("⛪ 킹스턴한인교회 통합 교적부 v14.11")
 menu = st.sidebar.radio("메뉴", ["성도 관리", "신규 등록", "PDF 주소록 생성"])
 
 if menu == "성도 관리":
@@ -172,110 +167,81 @@ if menu == "성도 관리":
     if not df.empty:
         search = st.text_input("🔍 성함으로 검색")
         f_df = df[df['이름'].str.contains(search)] if search else df.copy()
-        
-        # 관리 버튼 표시를 위한 임시 컬럼
-        f_df['관리'] = '수정' 
 
-        # 1. 이미지 렌더링 JS
+        # 이미지 렌더러
         thumbnail_renderer = JsCode("""
             class ThumbnailRenderer {
                 init(params) {
                     this.eGui = document.createElement('span');
-                    this.eGui.style.display = 'flex';
-                    this.eGui.style.alignItems = 'center';
-                    this.eGui.style.justifyContent = 'center';
-                    
                     if (params.value && params.value.startsWith('data:image')) {
-                        this.eGui.innerHTML = '<img src="' + params.value + '" style="width:40px;height:40px;border-radius:50%; object-fit: cover;" />';
+                        this.eGui.innerHTML = '<img src="' + params.value + '" style="width:35px;height:35px;border-radius:50%; margin-top:5px;" />';
                     } else {
-                        this.eGui.innerHTML = '<span style="color:#ddd; font-size:10px;">No Img</span>';
+                        this.eGui.innerHTML = '';
                     }
                 }
                 getGui() { return this.eGui; }
             }
         """)
 
-        # 2. 버튼 렌더링 (단순 시각적 효과)
-        btn_renderer = JsCode("""
-            class BtnRenderer {
-                init(params) {
-                    this.eGui = document.createElement('div');
-                    this.eGui.innerHTML = `
-                    <div style="
-                        background-color: #2E86C1; 
-                        color: white; 
-                        padding: 5px 10px; 
-                        border-radius: 5px; 
-                        font-size: 12px; 
-                        font-weight: bold;
-                        text-align: center;
-                        pointer-events: none;
-                    ">✏️ 수정</div>`;
-                    this.eGui.style.display = 'flex';
-                    this.eGui.style.justifyContent = 'center';
-                    this.eGui.style.alignItems = 'center';
-                }
-                getGui() { return this.eGui; }
-            }
-        """)
-
-        gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태", "관리"]])
+        gb = GridOptionsBuilder.from_dataframe(f_df[["id", "사진", "이름", "직분", "전화번호", "주소", "상태"]])
         
         gb.configure_column("id", hide=True)
-        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=70)
-        gb.configure_column("이름", width=100) 
+        gb.configure_column("사진", headerName="📸", cellRenderer=thumbnail_renderer, width=60)
+        
+        # [핵심 수정] 체크박스를 '이름' 컬럼에 강제로 붙임
+        gb.configure_column("이름", width=120, checkboxSelection=True, headerCheckboxSelection=False)
+        
         gb.configure_column("직분", width=80)
         gb.configure_column("전화번호", width=140)
         gb.configure_column("주소", width=200)
         gb.configure_column("상태", width=90)
-        gb.configure_column("관리", headerName="관리", cellRenderer=btn_renderer, width=80, pinned='right')
         
-        # 선택 모드 설정
+        # Selection 설정
         gb.configure_selection(
             selection_mode='single', 
-            use_checkbox=False,   
+            use_checkbox=True,      # 체크박스 사용
             pre_selected_rows=[]
         )
         
         grid_opts = gb.build()
         grid_opts['rowHeight'] = 50 
 
-        # AgGrid 생성
-        responses = AgGrid(
+        # AgGrid (key를 설정하여 새로고침 방지)
+        response = AgGrid(
             f_df, 
             gridOptions=grid_opts, 
-            update_mode=GridUpdateMode.SELECTION_CHANGED, 
+            update_mode=GridUpdateMode.SELECTION_CHANGED, # 선택 시 즉시 업데이트
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             allow_unsafe_jscode=True, 
             theme='balham',
             fit_columns_on_grid_load=False,
-            height=500
+            height=500,
+            key='main_grid' # 중요: 키 설정
         )
 
-        selected = responses.get('selected_rows')
+        selected_rows = response.get('selected_rows')
         
-        # --- [변경 핵심] 선택된 데이터가 있으면 아래에 별도 버튼 생성 ---
-        if selected is not None:
-            selected_id = None
-            selected_name = ""
+        # [디버깅 & 실행 영역]
+        # 선택된 사람이 있으면 아래 코드가 실행됩니다.
+        if selected_rows is not None and len(selected_rows) > 0:
+            # 리스트인지 데이터프레임인지 확인 후 처리
+            if isinstance(selected_rows, pd.DataFrame):
+                sel_name = selected_rows.iloc[0]['이름']
+                sel_id = selected_rows.iloc[0]['id']
+            else: # 리스트인 경우
+                sel_name = selected_rows[0].get('이름')
+                sel_id = selected_rows[0].get('id')
             
-            if isinstance(selected, list) and len(selected) > 0:
-                selected_id = selected[0].get('id')
-                selected_name = selected[0].get('이름')
-            elif isinstance(selected, pd.DataFrame) and not selected.empty:
-                selected_id = selected.iloc[0]['id']
-                selected_name = selected.iloc[0]['이름']
+            # 1. 진단 메세지 표시 (제대로 클릭됐는지 확인용)
+            st.info(f"✅ 시스템 인식 성공: **'{sel_name}'** 성도님이 선택되었습니다.")
             
-            # 선택된 사람이 있을 때만 아래 영역이 나타납니다.
-            if selected_id:
-                st.divider() # 구분선
-                col_msg, col_btn = st.columns([3, 1])
-                with col_msg:
-                    st.info(f"👉 **{selected_name}** 성도님이 선택되었습니다.")
-                with col_btn:
-                    # 이 버튼을 눌러야 비로소 팝업이 뜹니다. (가장 안전한 방법)
-                    if st.button("🛠️ 선택된 정보 수정하기", use_container_width=True, type="primary"):
-                        edit_member_dialog(str(selected_id), df)
+            # 2. 팝업 띄우기 버튼 (자동 팝업보다 100배 안정적임)
+            if st.button(f"🛠️ {sel_name} 성도님 정보 수정하기", type="primary", use_container_width=True):
+                edit_member_dialog(sel_id, df)
+        
+        else:
+            # 선택 안 됐을 때 안내
+            st.write("👆 목록에서 성도님 이름 옆의 체크박스를 클릭해주세요.")
 
 elif menu == "신규 등록":
     st.header("📝 새 성도님 등록")
